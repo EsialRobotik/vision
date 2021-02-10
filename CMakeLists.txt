@@ -1,0 +1,14 @@
+#####################################
+cmake_minimum_required (VERSION 2.8) 
+project (raspicam_test)
+find_package(raspicam REQUIRED)
+find_package(OpenCV REQUIRED core videoio imgcodecs imgproc highgui )
+IF  ( OpenCV_FOUND AND raspicam_CV_FOUND)
+	MESSAGE(STATUS "COMPILING OPENCV TESTS")
+	MESSAGE(STATUS " ${raspicam_CV_LIBS}")
+	add_executable (vision main.cpp)  
+	target_link_libraries (vision ${raspicam_CV_LIBS} opencv_videoio opencv_imgcodecs opencv_imgproc opencv_highgui)
+ELSE()
+	MESSAGE(FATAL_ERROR "OPENCV NOT FOUND IN YOUR SYSTEM")
+ENDIF()
+#####################################
