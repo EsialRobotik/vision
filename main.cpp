@@ -8,7 +8,7 @@ using namespace std;
 #include <unistd.h>
 #include <cstdint>
 
-static void dockZoneDetection(cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone);
+static void dockZoneDetection(bool isRightZone, cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone);
 
 
 int main ( int argc,char **argv ) {
@@ -96,7 +96,8 @@ int main ( int argc,char **argv ) {
         cv::Rect rightBoundRect = cv::boundingRect(rightMaskRed|rightMaskGreen);
 
 
-        dockZoneDetection(rightMaskRed, rightMaskGreen, rightBoundRect, rightZone);
+        dockZoneDetection(true, rightMaskRed, rightMaskGreen, rightBoundRect, rightZone);
+        dockZoneDetection(false, leftMaskRed, leftMaskGreen, leftBoundRect, leftZone);
 
         clock_t time_end = clock();
 
@@ -133,7 +134,7 @@ int main ( int argc,char **argv ) {
 
 
 
-static void dockZoneDetection(cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone)
+static void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone)
 {
     constexpr int nbCup = 5;
     constexpr int nbChunk = 6; // the image is divided in 6 chunk and the 1st cup is in the 2 first chunk 
@@ -149,8 +150,19 @@ static void dockZoneDetection(cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &b
 
     for(int cup=0; cup<nbCup; cup++)
     {
-        int cupWidth = (cup == 0) ? 2*chunkWidth : chunkWidth;
-        int currentZoneXstart =  (cup == 0) ? 0 : (cup+1)*chunkWidth;
+        int cupWidth;
+        if(isRightZone)
+            cupWidth = (cup == 0) ? 2*chunkWidth : chunkWidth;
+        else
+            cupWidth = (cup == nbCup-1) ? 2*chunkWidth : chunkWidth;
+
+        int currentZoneXstart;
+        if(isRightZone)
+            currentZoneXstart =  (cup == 0) ? 0 : (cup+1)*chunkWidth;
+        else
+            currentZoneXstart =  cup*chunkWidth;
+
+
         cv::Point tl(origin.x + currentZoneXstart, origin.y);
         cv::Point br(tl.x + cupWidth, tl.y + boundRect.height);
         cv::Rect roi(tl, br);
