@@ -4,24 +4,43 @@
 #include <raspicam/raspicam_still_cv.h>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
+#include <opencv2/opencv.hpp>
 using namespace std; 
 #include <unistd.h>
 #include <cstdint>
 
 static void dockZoneDetection(bool isRightZone, cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone);
+static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor );
 
+
+cv::Scalar ColorWhite(255, 255, 255, 0);
 
 int main ( int argc,char **argv ) {
    
     time_t timer_begin,timer_end;
     raspicam::RaspiCam_Still_Cv Camera;
-    cv::Mat photo;
+    cv::Mat photo, photo_undistorted;
 
+
+    /* Undistort stuff */
+    float dataK[] = { 637.2385378800869, 0.0, 863.5527311953624, 0.0, 638.578239541455, 504.03676841955485, 0.0, 0.0, 1.0 };
+    cv::Mat K = cv::Mat(3, 3, CV_32F, dataK);
+
+    float dataD[] = { 0.2214277948742857, -0.1187171592448915, 0.10125203296576267, -0.044765584282516376};
+    cv::Mat D = cv::Mat(1, 4, CV_32F, dataD);
+
+    cv::Size image_size(1920, 1080);
+
+    cv::Mat map1, map2;
+    cv::initUndistortRectifyMap(K, D, cv::Mat(), K, image_size, CV_16SC2, map1, map2);
+
+    cout << "K=" << K << endl;
+    cout << "D=" << D << endl;
+    cout << "image_size=" << image_size << endl;
     
     
-    cv::Mat final;
 
-        int dilation_size = 5;
+        int dilation_size = 4;
       cv::Mat kernel_erose = getStructuringElement(  cv::MORPH_RECT,
                        cv::Size( 2*dilation_size + 1, 2*dilation_size+1 ),
                        cv::Point( dilation_size, dilation_size ) );
@@ -53,27 +72,34 @@ int main ( int argc,char **argv ) {
         Camera.retrieve ( photo);
         
         cout<< "capture duration = " <<  float(clock()-capture_start)/CLOCKS_PER_SEC <<endl;
-        cout<<"size row:" << photo.rows << " cols:" << photo.cols <<endl;
+        cout<<"size row:" << photo.rows << " cols:" << photo.cols << "photo.size()" << photo.size()<<endl;
 
 
         clock_t time_begin = clock(); 
+
+        
+        // cv::remap(photo, photo_undistorted, map1, map2, cv::INTER_LINEAR);
 
         // cv::Rect2d cropZone = cv::selectROI(photo);
         //  cout<<"selection " << cropZone <<endl; 
 
         // Extract right/left zone 
-        cv::Rect2d cropZoneLeft(253, 665, 293, 103);
-
-        cv::Rect2d cropZoneRight(1100, 680, 303 , 80);
+        cv::Rect2d cropZoneLeft(181, 659, 254, 104);
+        cv::Rect2d cropZoneRight(1178, 698, 241, 70);
         cv::Mat rightZone = photo(cropZoneRight);
         cv::Mat leftZone = photo(cropZoneLeft);
+
+        // extract center zone
+        cv::Rect2d cropCenterZone(499, 339, 667, 355);
+        cv::Mat centerZone = photo(cropCenterZone);
         
         // Transform to HSV
         cv::Mat rightZone_hsv;
         cv::Mat leftZone_hsv;
+        cv::Mat centerZone_hsv;
         cv::cvtColor( rightZone, rightZone_hsv, cv::COLOR_BGR2HSV);
         cv::cvtColor( leftZone, leftZone_hsv, cv::COLOR_BGR2HSV);
-
+        cv::cvtColor( centerZone, centerZone_hsv, cv::COLOR_BGR2HSV);
         
         // right color mask 
         cv::Mat rightMaskRed, rightMaskGreen;  // NB: green mask is also use as 2nd mask for red detection
@@ -89,47 +115,99 @@ int main ( int argc,char **argv ) {
         leftMaskRed |= leftMaskGreen;
         cv::inRange(leftZone_hsv, cv::Scalar(40, 50, 30), cv::Scalar(80, 255, 255), leftMaskGreen);
 
+        // center color mask 
+        cv::Mat centerMaskRed, centerMaskGreen;
+        cv::inRange(centerZone_hsv, cv::Scalar(0, 100, 70), cv::Scalar(8, 255, 255), centerMaskRed);
+        cv::inRange(centerZone_hsv, cv::Scalar(170, 100, 70), cv::Scalar(180, 255, 255), centerMaskGreen);
+        centerMaskRed |= centerMaskGreen;
+        cv::inRange(centerZone_hsv, cv::Scalar(40, 50, 30), cv::Scalar(80, 255, 255), centerMaskGreen);
 
 
+        /*
+         *  Left / right dock zone 
+         */
         // Bound a rectangle around the detected colors
         cv::Rect leftBoundRect = cv::boundingRect(leftMaskRed|leftMaskGreen);
         cv::Rect rightBoundRect = cv::boundingRect(rightMaskRed|rightMaskGreen);
 
-
+        // call dock zone color detection algorithm
         dockZoneDetection(true, rightMaskRed, rightMaskGreen, rightBoundRect, rightZone);
         dockZoneDetection(false, leftMaskRed, leftMaskGreen, leftBoundRect, leftZone);
 
+
+        /*
+         * Center zone 
+         */
+        centerZoneDetection(centerMaskGreen, centerZone, cv::Scalar(168, 255, 0) );
+        centerZoneDetection(centerMaskRed, centerZone, cv::Scalar(0, 162, 255) );
+
+
+
+        // Various display
+        cv::rectangle( photo, cropZoneLeft.tl(), cropZoneLeft.br(), ColorWhite, 1);
+        cv::rectangle( photo, cropZoneRight.tl(), cropZoneRight.br(), ColorWhite, 1);
+
+
+
         clock_t time_end = clock();
-
-        cv::Scalar ColorWhite(255, 255, 255, 0);
-        cv::rectangle(   leftZone, leftBoundRect.tl(), leftBoundRect.br(), ColorWhite   );    
-        cv::rectangle(   rightZone, rightBoundRect.tl(), rightBoundRect.br(), ColorWhite   );    
-
-      
-        
         double secondsElapsed = difftime ( timer_end,timer_begin );
-        cout<< " duration = " <<  float(time_end-time_begin)/CLOCKS_PER_SEC <<endl;
-
-        cv::namedWindow( "photo" );
-        // cv::namedWindow( "rightZone" );
-        // cv::namedWindow( "rightZonemMask" );
-        // cv::namedWindow( "leftZone" );
-        // cv::namedWindow( "leftZonemMaskRed" );
-        
+        cout<< "Compute duration = " <<  float(time_end-time_begin)/CLOCKS_PER_SEC <<endl;
+      
         cv::imshow( "photo", photo );
-        // cv::imshow( "rightZone", rightZone );
-        // cv::imshow( "rightZonemMask", rightMaskRed | rightMaskGreen );
-        // cv::imshow( "leftZone", leftZone);
-        // cv::imshow( "leftZonemMaskRed",  leftMaskRed );
-        
-        cv::waitKey(1);
-   
+        cv::waitKey(0);
     }
 
     cout<<"Stop camera..."<<endl;
     Camera.release();
    
  return 0;
+}
+
+
+static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor )
+{
+    cv::Mat kernel = cv::Mat::ones(3,3,  CV_8U);
+    cv::morphologyEx(centerZoneMask, centerZoneMask, cv::MORPH_OPEN,kernel, cv::Point(-1,-1),  2);
+
+    cv::Mat sure_bg;
+    cv::dilate(centerZoneMask, sure_bg, kernel, cv::Point(-1,-1), 3);
+    
+    cv::Mat centerMaskDist;
+    cv::distanceTransform(centerZoneMask, centerMaskDist, cv::DIST_L2, 5);
+
+
+    double maxVal;     
+    cv::minMaxLoc( centerMaskDist, 0, &maxVal, 0, 0 );
+    cv::Mat sure_fg;
+    cv::threshold(centerMaskDist,sure_fg, 0.5*maxVal,255,cv::THRESH_BINARY);
+
+    // Pour pouvoir afficher le watershed
+    cv::normalize(centerMaskDist,centerMaskDist,0,1,cv::NORM_MINMAX);
+
+    sure_fg.convertTo(sure_fg, CV_8U, 10);
+
+    vector<vector<cv::Point> > fg_contours;
+    cv::findContours(sure_fg, fg_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+
+    cv::Mat unknow = sure_bg-sure_fg;
+
+    cv::Mat markers;
+    cv::connectedComponents(sure_fg, markers);
+    markers +=1;
+    markers.setTo(0, unknow==255);
+
+    cv::watershed(centerZoneImage, markers);
+
+
+    for (size_t i = 0; i < fg_contours.size(); i++)
+    {
+        cv::Moments moment = cv::moments(fg_contours[i]);
+        cv::Point center(moment.m10 / (moment.m00+1e-5), moment.m01 / (moment.m00+1e-5));
+        cv::circle( centerZoneImage, center, 5, circleColor, -1 );
+    }
+
+    centerZoneImage.setTo( cv::Scalar(255, 255, 255), markers==-1);
 }
 
 
