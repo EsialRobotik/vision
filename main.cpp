@@ -100,7 +100,9 @@ int main ( int argc,char **argv ) {
         cv::cvtColor( rightZone, rightZone_hsv, cv::COLOR_BGR2HSV);
         cv::cvtColor( leftZone, leftZone_hsv, cv::COLOR_BGR2HSV);
         cv::cvtColor( centerZone, centerZone_hsv, cv::COLOR_BGR2HSV);
-        
+
+
+      
         // right color mask 
         cv::Mat rightMaskRed, rightMaskGreen;  // NB: green mask is also use as 2nd mask for red detection
         cv::inRange(rightZone_hsv, cv::Scalar(0, 100, 70), cv::Scalar(8, 255, 255), rightMaskRed);
@@ -123,6 +125,8 @@ int main ( int argc,char **argv ) {
         cv::inRange(centerZone_hsv, cv::Scalar(40, 50, 30), cv::Scalar(80, 255, 255), centerMaskGreen);
 
 
+
+
         /*
          *  Left / right dock zone 
          */
@@ -133,7 +137,6 @@ int main ( int argc,char **argv ) {
         // call dock zone color detection algorithm
         dockZoneDetection(true, rightMaskRed, rightMaskGreen, rightBoundRect, rightZone);
         dockZoneDetection(false, leftMaskRed, leftMaskGreen, leftBoundRect, leftZone);
-
 
         /*
          * Center zone 
@@ -164,16 +167,49 @@ int main ( int argc,char **argv ) {
 }
 
 
+static void tryToSeparateMore(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Mat &centerZoneMask_separated)
+{
+    // Transform to gray scale
+    cv::Mat centerZoneImage_gray;
+    cv::cvtColor( centerZoneImage, centerZoneImage_gray, cv::COLOR_BGR2GRAY);
+
+    // Use bilateralFilter to remove noise while keeping sharpness
+    cv::Mat centerZoneImage_gray_blur;
+    cv::bilateralFilter( centerZoneImage_gray, centerZoneImage_gray_blur, 5, 50, 50);
+
+    // Apply laplacian to detect edge
+    cv::Mat centerZoneImage_lap;
+    cv::Laplacian(centerZoneImage_gray_blur, centerZoneImage_lap, CV_32F, 5);
+    cv::convertScaleAbs(centerZoneImage_lap, centerZoneImage_lap);
+
+
+    // Just keep interesting part of the image
+    cv::Mat centerZoneImage_lap_masked;
+    cv::bitwise_and(centerZoneImage_lap,centerZoneImage_lap, centerZoneImage_lap_masked, centerZoneMask);
+
+    // Apply thresholding to keep edges 
+    cv::Mat centerZoneImage_mask;    
+    cv::threshold(centerZoneImage_lap_masked, centerZoneImage_mask, 0.7*255, 255,cv::THRESH_BINARY_INV);
+
+    // Apply the computed mask to the source mask
+    cv::bitwise_and(centerZoneMask,centerZoneMask, centerZoneMask_separated, centerZoneImage_mask);
+}
+
 static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor )
 {
-    cv::Mat kernel = cv::Mat::ones(3,3,  CV_8U);
-    cv::morphologyEx(centerZoneMask, centerZoneMask, cv::MORPH_OPEN,kernel, cv::Point(-1,-1),  2);
+    cv::Mat centerZoneMask_separated = centerZoneMask;    
+    // tryToSeparateMore(centerZoneMask, centerZoneImage, centerZoneMask_separated);
+
+    cv::Mat centerZoneMask_opened;
+    int kernel_open_size= 3;
+    cv::Mat kernel_open = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_open_size*2+1, kernel_open_size*2+1));
+    cv::morphologyEx(centerZoneMask_separated, centerZoneMask_opened, cv::MORPH_OPEN,kernel_open, cv::Point(-1,-1),  5);
 
     cv::Mat sure_bg;
-    cv::dilate(centerZoneMask, sure_bg, kernel, cv::Point(-1,-1), 3);
+    cv::dilate(centerZoneMask, sure_bg, kernel_open, cv::Point(-1,-1), 3);
     
     cv::Mat centerMaskDist;
-    cv::distanceTransform(centerZoneMask, centerMaskDist, cv::DIST_L2, 5);
+    cv::distanceTransform(centerZoneMask_opened, centerMaskDist, cv::DIST_L2, 5);
 
 
     double maxVal;     
@@ -181,7 +217,7 @@ static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImag
     cv::Mat sure_fg;
     cv::threshold(centerMaskDist,sure_fg, 0.5*maxVal,255,cv::THRESH_BINARY);
 
-    // Pour pouvoir afficher le watershed
+    // Pour pouvoir afficher le dist transform
     cv::normalize(centerMaskDist,centerMaskDist,0,1,cv::NORM_MINMAX);
 
     sure_fg.convertTo(sure_fg, CV_8U, 10);
@@ -258,8 +294,15 @@ static void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & gree
         {
             nbRed += *it;
         }
+
+        int nb_pixel_in_zone = subRed.rows * subRed.cols;
         
-        if( nbRed > nbGreen)
+        if( nbRed < 0.1*nb_pixel_in_zone  && nbGreen < 0.1*nb_pixel_in_zone )
+        {
+           cv::rectangle(   zone, tl, br, ColorWhite, 10);
+            cout << "cup :" << cup << "  unknown" << endl;   
+        }
+        else if( nbRed > nbGreen)
         {
             cv::rectangle(   zone, tl, br, ColorRed, 10);
             cout << "cup :" << cup << " Red" << endl;    
