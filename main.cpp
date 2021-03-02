@@ -8,8 +8,11 @@
 using namespace std; 
 #include <unistd.h>
 #include <cstdint>
+#include <cmath> 
+#include <assert.h>
 
-static void dockZoneDetection(bool isRightZone, cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone);
+static void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone);
+static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &centerZoneMask_closed);
 static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor );
 
 
@@ -72,9 +75,7 @@ int main ( int argc,char **argv ) {
         Camera.retrieve ( photo);
         
         cout<< "capture duration = " <<  float(clock()-capture_start)/CLOCKS_PER_SEC <<endl;
-        cout<<"size row:" << photo.rows << " cols:" << photo.cols << "photo.size()" << photo.size()<<endl;
-
-
+       
         clock_t time_begin = clock(); 
 
         
@@ -125,8 +126,6 @@ int main ( int argc,char **argv ) {
         cv::inRange(centerZone_hsv, cv::Scalar(40, 50, 30), cv::Scalar(80, 255, 255), centerMaskGreen);
 
 
-
-
         /*
          *  Left / right dock zone 
          */
@@ -141,9 +140,10 @@ int main ( int argc,char **argv ) {
         /*
          * Center zone 
          */
+
         centerZoneDetection(centerMaskGreen, centerZone, cv::Scalar(168, 255, 0) );
         centerZoneDetection(centerMaskRed, centerZone, cv::Scalar(0, 162, 255) );
-
+       
 
 
         // Various display
@@ -167,46 +167,100 @@ int main ( int argc,char **argv ) {
 }
 
 
-static void tryToSeparateMore(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Mat &centerZoneMask_separated)
+
+static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &centerZoneMask_closed, cv::Mat &centerZoneMask_separated    )
 {
-    // Transform to gray scale
-    cv::Mat centerZoneImage_gray;
-    cv::cvtColor( centerZoneImage, centerZoneImage_gray, cv::COLOR_BGR2GRAY);
+    vector<vector<cv::Point> > contours;
+    cv::findContours(centerZoneMask_closed, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-    // Use bilateralFilter to remove noise while keeping sharpness
-    cv::Mat centerZoneImage_gray_blur;
-    cv::bilateralFilter( centerZoneImage_gray, centerZoneImage_gray_blur, 5, 50, 50);
+    cv::Mat detectedObjectContourMask = cv::Mat::ones(centerZoneMask_closed.rows, centerZoneMask_closed.cols, CV_8UC1);
+    detectedObjectContourMask.setTo(255);
+    float oneElementAreaSize = 2000; // TODO : depends de la hauteur de l'objet dans l'image !!
+    for (size_t contour = 0; contour < contours.size(); contour++)
+    {
+        float area = contourArea(contours[contour]);
+        int nbOjectInArea = round(area/oneElementAreaSize);
+        cout << "area " << area << "/" << oneElementAreaSize << "=" << nbOjectInArea << endl;
 
-    // Apply laplacian to detect edge
-    cv::Mat centerZoneImage_lap;
-    cv::Laplacian(centerZoneImage_gray_blur, centerZoneImage_lap, CV_32F, 5);
-    cv::convertScaleAbs(centerZoneImage_lap, centerZoneImage_lap);
+        if( nbOjectInArea < 2)
+            continue;
+
+        cv::Mat areaMat = cv::Mat::zeros(centerZoneMask_closed.rows, centerZoneMask_closed.cols, CV_8UC1);
+        cv::drawContours(areaMat, contours, contour, cv::Scalar(255), -1);
 
 
-    // Just keep interesting part of the image
-    cv::Mat centerZoneImage_lap_masked;
-    cv::bitwise_and(centerZoneImage_lap,centerZoneImage_lap, centerZoneImage_lap_masked, centerZoneMask);
+        int count=0;
+        for (cv::MatIterator_<uint8_t> it = areaMat.begin<uint8_t>(); it != areaMat.end<uint8_t>(); ++it)
+            if( *it > 0 ) count++;
 
-    // Apply thresholding to keep edges 
-    cv::Mat centerZoneImage_mask;    
-    cv::threshold(centerZoneImage_lap_masked, centerZoneImage_mask, 0.7*255, 255,cv::THRESH_BINARY_INV);
+        cv::Mat kmeanPoints(count, 1 , CV_32FC2);
+        int currentIdx=0;
+        for( int x = 0; x < areaMat.rows; x++ ) 
+        {
+           for( int y = 0; y < areaMat.cols; y++ ) 
+           {
+                if( areaMat.at<uint8_t>(x,y) > 0 )
+                {
+                    kmeanPoints.at<cv::Vec2f>(currentIdx++) = cv::Vec2f((float)y,(float)x);
+                }
+           }
+        }
 
-    // Apply the computed mask to the source mask
-    cv::bitwise_and(centerZoneMask,centerZoneMask, centerZoneMask_separated, centerZoneImage_mask);
+        cv::Mat labels;
+        std::vector<cv::Point2f> centers;
+        cv::kmeans( kmeanPoints, nbOjectInArea, labels,
+                    cv::TermCriteria( cv::TermCriteria::EPS+cv::TermCriteria::COUNT, 10, 1.0),
+                    3, cv::KMEANS_PP_CENTERS, centers);
+
+        for( int clusterNum=0; clusterNum<nbOjectInArea; clusterNum++)
+        {
+            cv::Mat currentClusterShape = cv::Mat::zeros(centerZoneMask_closed.rows, centerZoneMask_closed.cols, CV_8UC1);
+            for(int  i = 0; i < count; i++ )
+            {
+                int clusterIdx = labels.at<int>(i);
+                if( clusterNum != clusterIdx)
+                    continue;
+
+                cv::Point ipt = kmeanPoints.at<cv::Point2f>(i);
+                currentClusterShape.at<uint8_t>(ipt) = 255;
+            }
+
+            vector<vector<cv::Point> > cluster_contours;
+            cv::findContours(currentClusterShape, cluster_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+            assert(cluster_contours.size() < 2);
+            cv::drawContours(detectedObjectContourMask, cluster_contours, -1, cv::Scalar(0), 2);
+        }
+    } 
+
+
+    cv::bitwise_and(centerZoneMask,centerZoneMask, centerZoneMask_separated, detectedObjectContourMask);
+
 }
+
 
 static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor )
 {
-    cv::Mat centerZoneMask_separated = centerZoneMask;    
-    // tryToSeparateMore(centerZoneMask, centerZoneImage, centerZoneMask_separated);
 
+    int kernel_close_size= 2;
+    cv::Mat kernel_close = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_close_size*2+1, kernel_close_size*2+1));
+
+    cv::Mat centerZoneMask_closed;
+    cv::morphologyEx(centerZoneMask, centerZoneMask_closed, cv::MORPH_CLOSE,kernel_close, cv::Point(-1,-1),  2);
+
+
+    cv::Mat centerZoneMask_separated;
+    trySeparateOverlappingElement(centerZoneMask, centerZoneMask_closed, centerZoneMask_separated);
+
+   
     cv::Mat centerZoneMask_opened;
     int kernel_open_size= 3;
     cv::Mat kernel_open = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_open_size*2+1, kernel_open_size*2+1));
     cv::morphologyEx(centerZoneMask_separated, centerZoneMask_opened, cv::MORPH_OPEN,kernel_open, cv::Point(-1,-1),  5);
 
+
     cv::Mat sure_bg;
     cv::dilate(centerZoneMask, sure_bg, kernel_open, cv::Point(-1,-1), 3);
+
     
     cv::Mat centerMaskDist;
     cv::distanceTransform(centerZoneMask_opened, centerMaskDist, cv::DIST_L2, 5);
@@ -226,7 +280,10 @@ static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImag
     cv::findContours(sure_fg, fg_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
 
+
     cv::Mat unknow = sure_bg-sure_fg;
+
+    // cv::imwrite("sure_fg.jpg", sure_fg);
 
     cv::Mat markers;
     cv::connectedComponents(sure_fg, markers);
@@ -235,9 +292,9 @@ static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImag
 
     cv::watershed(centerZoneImage, markers);
 
-
     for (size_t i = 0; i < fg_contours.size(); i++)
     {
+        double area = contourArea(fg_contours[i]);
         cv::Moments moment = cv::moments(fg_contours[i]);
         cv::Point center(moment.m10 / (moment.m00+1e-5), moment.m01 / (moment.m00+1e-5));
         cv::circle( centerZoneImage, center, 5, circleColor, -1 );
