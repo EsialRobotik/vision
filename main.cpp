@@ -24,37 +24,23 @@ int main ( int argc,char **argv ) {
     raspicam::RaspiCam_Still_Cv Camera;
     cv::Mat photo, photo_undistorted;
 
-
-    /* Undistort stuff */
-    float dataK[] = { 637.2385378800869, 0.0, 863.5527311953624, 0.0, 638.578239541455, 504.03676841955485, 0.0, 0.0, 1.0 };
-    cv::Mat K = cv::Mat(3, 3, CV_32F, dataK);
-
-    float dataD[] = { 0.2214277948742857, -0.1187171592448915, 0.10125203296576267, -0.044765584282516376};
-    cv::Mat D = cv::Mat(1, 4, CV_32F, dataD);
-
-    cv::Size image_size(1920, 1080);
-
     cv::Mat map1, map2;
-    cv::initUndistortRectifyMap(K, D, cv::Mat(), K, image_size, CV_16SC2, map1, map2);
+    cv::FileStorage fisheye_map("fisheye_map", cv::FileStorage::READ);
+    fisheye_map["map1"] >> map1;
+    fisheye_map["map2"] >> map2;
+    fisheye_map.release();
 
-    cout << "K=" << K << endl;
-    cout << "D=" << D << endl;
-    cout << "image_size=" << image_size << endl;
-    
-    
-
-        int dilation_size = 4;
-      cv::Mat kernel_erose = getStructuringElement(  cv::MORPH_RECT,
-                       cv::Size( 2*dilation_size + 1, 2*dilation_size+1 ),
-                       cv::Point( dilation_size, dilation_size ) );
-
+    if( map1.size().width == 0 || map1.size().height == 0
+        || map2.size().width == 0 || map2.size().height == 0)
+    {
+        cerr<<"Error retrieving map file for fisheye undistortion in fisheye_map"<<endl;
+        return -1;
+    }
     
     Camera.set(cv::CAP_PROP_FRAME_WIDTH,  1920);
     Camera.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
-    Camera.setRotation(90);
 
 
-    cout<<"Opening Camera..."<<endl;
     if (!Camera.open()) 
     {
         cerr<<"Error opening the camera"<<endl;
@@ -62,8 +48,7 @@ int main ( int argc,char **argv ) {
     }
    
     cout<<"Warm up... "<<endl; 
-    sleep(3);
-    
+    sleep(3);    
     cout<<"Capturing " <<endl;
     
 
@@ -73,13 +58,21 @@ int main ( int argc,char **argv ) {
         clock_t capture_start = clock();
         Camera.grab();
         Camera.retrieve ( photo);
+
         
         cout<< "capture duration = " <<  float(clock()-capture_start)/CLOCKS_PER_SEC <<endl;
        
         clock_t time_begin = clock(); 
 
+        capture_start = clock();
+        cv::remap(photo, photo_undistorted, map1, map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+
+        cout<< "fisheye compensation duration = " <<  float(clock()-capture_start)/CLOCKS_PER_SEC <<endl;
+
         
-        // cv::remap(photo, photo_undistorted, map1, map2, cv::INTER_LINEAR);
+    //  cv::imwrite("photo.jpg", photo);
+    // cv::imwrite("photo_undistorted.jpg", photo_undistorted);
+
 
         // cv::Rect2d cropZone = cv::selectROI(photo);
         //  cout<<"selection " << cropZone <<endl; 
@@ -87,12 +80,12 @@ int main ( int argc,char **argv ) {
         // Extract right/left zone 
         cv::Rect2d cropZoneLeft(181, 659, 254, 104);
         cv::Rect2d cropZoneRight(1178, 698, 241, 70);
-        cv::Mat rightZone = photo(cropZoneRight);
-        cv::Mat leftZone = photo(cropZoneLeft);
+        cv::Mat rightZone = photo_undistorted(cropZoneRight);
+        cv::Mat leftZone = photo_undistorted(cropZoneLeft);
 
         // extract center zone
         cv::Rect2d cropCenterZone(499, 339, 667, 355);
-        cv::Mat centerZone = photo(cropCenterZone);
+        cv::Mat centerZone = photo_undistorted(cropCenterZone);
         
         // Transform to HSV
         cv::Mat rightZone_hsv;
@@ -147,8 +140,8 @@ int main ( int argc,char **argv ) {
 
 
         // Various display
-        cv::rectangle( photo, cropZoneLeft.tl(), cropZoneLeft.br(), ColorWhite, 1);
-        cv::rectangle( photo, cropZoneRight.tl(), cropZoneRight.br(), ColorWhite, 1);
+        cv::rectangle( photo_undistorted, cropZoneLeft.tl(), cropZoneLeft.br(), ColorWhite, 1);
+        cv::rectangle( photo_undistorted, cropZoneRight.tl(), cropZoneRight.br(), ColorWhite, 1);
 
 
 
@@ -156,7 +149,7 @@ int main ( int argc,char **argv ) {
         double secondsElapsed = difftime ( timer_end,timer_begin );
         cout<< "Compute duration = " <<  float(time_end-time_begin)/CLOCKS_PER_SEC <<endl;
       
-        cv::imshow( "photo", photo );
+        cv::imshow( "photo_undistorted", photo_undistorted );
         cv::waitKey(0);
     }
 
@@ -279,11 +272,7 @@ static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImag
     vector<vector<cv::Point> > fg_contours;
     cv::findContours(sure_fg, fg_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-
-
     cv::Mat unknow = sure_bg-sure_fg;
-
-    // cv::imwrite("sure_fg.jpg", sure_fg);
 
     cv::Mat markers;
     cv::connectedComponents(sure_fg, markers);
