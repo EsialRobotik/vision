@@ -5,11 +5,13 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
-using namespace std; 
 #include <unistd.h>
 #include <cstdint>
 #include <cmath> 
 #include <assert.h>
+#include <libconfig.h++>
+
+using namespace std; 
 
 static void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone);
 static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &centerZoneMask_closed);
@@ -20,10 +22,6 @@ cv::Scalar ColorWhite(255, 255, 255, 0);
 
 int main ( int argc,char **argv ) {
    
-    time_t timer_begin,timer_end;
-    raspicam::RaspiCam_Still_Cv Camera;
-    cv::Mat photo, photo_undistorted;
-
     cv::Mat map1, map2;
     cv::FileStorage fisheye_map("fisheye_map", cv::FileStorage::READ);
     fisheye_map["map1"] >> map1;
@@ -36,11 +34,36 @@ int main ( int argc,char **argv ) {
         cerr<<"Error retrieving map file for fisheye undistortion in fisheye_map"<<endl;
         return -1;
     }
+
+    libconfig::Config cfg;
+    cfg.readFile("vision.cfg");
+    const libconfig::Setting& root = cfg.getRoot();
+
+    int x, y, width,height;
+    root["left_roi"].lookupValue("x", x);
+    root["left_roi"].lookupValue("y", y);
+    root["left_roi"].lookupValue("width", width);
+    root["left_roi"].lookupValue("height", height);
+    cv::Rect2d cropZoneLeft(x, y, width,height);
+    
+    root["right_roi"].lookupValue("x", x);
+    root["right_roi"].lookupValue("y", y);
+    root["right_roi"].lookupValue("width", width);
+    root["right_roi"].lookupValue("height", height);
+    cv::Rect2d cropZoneRight(x, y, width,height);
+
+    root["center_roi"].lookupValue("x", x);
+    root["center_roi"].lookupValue("y", y);
+    root["center_roi"].lookupValue("width", width);
+    root["center_roi"].lookupValue("height", height);
+    cv::Rect2d cropCenterZone(x, y, width,height);
+
+    time_t timer_begin,timer_end;
+    raspicam::RaspiCam_Still_Cv Camera;
+    cv::Mat photo, photo_undistorted;
     
     Camera.set(cv::CAP_PROP_FRAME_WIDTH,  1920);
     Camera.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
-
-
     if (!Camera.open()) 
     {
         cerr<<"Error opening the camera"<<endl;
@@ -78,13 +101,10 @@ int main ( int argc,char **argv ) {
         //  cout<<"selection " << cropZone <<endl; 
 
         // Extract right/left zone 
-        cv::Rect2d cropZoneLeft(181, 659, 254, 104);
-        cv::Rect2d cropZoneRight(1178, 698, 241, 70);
         cv::Mat rightZone = photo_undistorted(cropZoneRight);
         cv::Mat leftZone = photo_undistorted(cropZoneLeft);
 
         // extract center zone
-        cv::Rect2d cropCenterZone(499, 339, 667, 355);
         cv::Mat centerZone = photo_undistorted(cropCenterZone);
         
         // Transform to HSV
