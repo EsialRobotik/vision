@@ -13,23 +13,34 @@
 
 using namespace std; 
 
+
+cv::Mat fisheye_map1, fisheye_map2;
+cv::Scalar ColorWhite(255, 255, 255, 0);
+
 static void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone);
 static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &centerZoneMask_closed);
 static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor );
 
 
-cv::Scalar ColorWhite(255, 255, 255, 0);
 
-int main ( int argc,char **argv ) {
+void generateFisheyeUndistordMap(cv::Mat &map1, cv::Mat &map2)
+{
+    cv::Mat K, D;
+    cv::FileStorage file_kd("fisheye_KD", cv::FileStorage::READ);
+    file_kd["K_mat"] >> K;
+    file_kd["D_mat"] >> D;
+    file_kd.release();
+
+    cv::Size img_size(1920, 1080);
+    cv::fisheye::initUndistortRectifyMap(K, D, cv::Mat::eye(3, 3, CV_32F), K, img_size, CV_16SC2, map1, map2);
+}
+
+int main ( int argc,char **argv ) 
+{
    
-    cv::Mat map1, map2;
-    cv::FileStorage fisheye_map("fisheye_map", cv::FileStorage::READ);
-    fisheye_map["map1"] >> map1;
-    fisheye_map["map2"] >> map2;
-    fisheye_map.release();
-
-    if( map1.size().width == 0 || map1.size().height == 0
-        || map2.size().width == 0 || map2.size().height == 0)
+    generateFisheyeUndistordMap( fisheye_map1, fisheye_map2);
+    if( fisheye_map1.size().width == 0 || fisheye_map1.size().height == 0
+        || fisheye_map2.size().width == 0 || fisheye_map2.size().height == 0)
     {
         cerr<<"Error retrieving map file for fisheye undistortion in fisheye_map"<<endl;
         return -1;
@@ -78,19 +89,25 @@ int main ( int argc,char **argv ) {
     while(1)
     {
  
-        clock_t capture_start = clock();
+        clock_t start = clock();
         Camera.grab();
         Camera.retrieve ( photo);
 
         
-        cout<< "capture duration = " <<  float(clock()-capture_start)/CLOCKS_PER_SEC <<endl;
+        cout<< "capture duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
        
-        clock_t time_begin = clock(); 
 
-        capture_start = clock();
-        cv::remap(photo, photo_undistorted, map1, map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
 
-        cout<< "fisheye compensation duration = " <<  float(clock()-capture_start)/CLOCKS_PER_SEC <<endl;
+        start = clock();
+        cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+
+         
+        cv::imshow( "photo_undistorted", photo_undistorted );
+        cv::imshow( "photo", photo );
+        cv::waitKey(0);
+
+        cout<< "fisheye compensation duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
+        start = clock(); 
 
         
     //  cv::imwrite("photo.jpg", photo);
@@ -150,10 +167,10 @@ int main ( int argc,char **argv ) {
         dockZoneDetection(true, rightMaskRed, rightMaskGreen, rightBoundRect, rightZone);
         dockZoneDetection(false, leftMaskRed, leftMaskGreen, leftBoundRect, leftZone);
 
+
         /*
          * Center zone 
          */
-
         centerZoneDetection(centerMaskGreen, centerZone, cv::Scalar(168, 255, 0) );
         centerZoneDetection(centerMaskRed, centerZone, cv::Scalar(0, 162, 255) );
        
@@ -165,9 +182,7 @@ int main ( int argc,char **argv ) {
 
 
 
-        clock_t time_end = clock();
-        double secondsElapsed = difftime ( timer_end,timer_begin );
-        cout<< "Compute duration = " <<  float(time_end-time_begin)/CLOCKS_PER_SEC <<endl;
+        cout<< "compute duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
       
         cv::imshow( "photo_undistorted", photo_undistorted );
         cv::waitKey(0);
