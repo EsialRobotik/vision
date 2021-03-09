@@ -5,6 +5,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
+#include <opencv2/aruco.hpp>
 #include <unistd.h>
 #include <cstdint>
 #include <cmath> 
@@ -13,7 +14,7 @@
 
 using namespace std; 
 
-
+cv::Mat K, D;
 cv::Mat fisheye_map1, fisheye_map2;
 cv::Scalar ColorWhite(255, 255, 255, 0);
 
@@ -21,11 +22,13 @@ static void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & gree
 static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &centerZoneMask_closed);
 static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor );
 
+const int32_t aruco_table_pos_x = 1500;
+const int32_t aruco_table_pos_y = 1250;
 
 
 void generateFisheyeUndistordMap(cv::Mat &map1, cv::Mat &map2)
 {
-    cv::Mat K, D;
+
     cv::FileStorage file_kd("fisheye_KD", cv::FileStorage::READ);
     file_kd["K_mat"] >> K;
     file_kd["D_mat"] >> D;
@@ -93,6 +96,10 @@ int main ( int argc,char **argv )
         Camera.grab();
         Camera.retrieve ( photo);
 
+
+      
+        cv::imshow( "photo", photo );
+        cv::waitKey(0);
         
         cout<< "capture duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
        
@@ -101,21 +108,45 @@ int main ( int argc,char **argv )
         start = clock();
         cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
 
-         
-        cv::imshow( "photo_undistorted", photo_undistorted );
-        cv::imshow( "photo", photo );
-        cv::waitKey(0);
-
         cout<< "fisheye compensation duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
         start = clock(); 
 
-        
-    //  cv::imwrite("photo.jpg", photo);
+
+       
+        vector<int> markerIds;
+        vector<vector<cv::Point2f>> markerCorners, rejectedCandidates;
+        cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
+        cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_250);
+        cv::aruco::detectMarkers(photo_undistorted, dictionary, markerCorners, markerIds, parameters, rejectedCandidates);
+
+        cout << "markerIds.size()" << markerIds.size() << endl;
+
+    // if at least one marker detected
+        if (markerIds.size() > 0)
+        {
+            cout << "markerIds[0]" << markerIds[0] << endl;
+            cv::aruco::drawDetectedMarkers(photo_undistorted, markerCorners, markerIds);
+         
+            std::vector<cv::Vec3d> rvecs, tvecs;
+            cv::aruco::estimatePoseSingleMarkers(markerCorners, 0.05, K, D, rvecs, tvecs);   
+
+            for(int i=0; i<markerIds.size(); i++)
+            {
+                cv::aruco::drawAxis(photo_undistorted, K, D, rvecs[i], tvecs[i], 0.1);
+                cout<< "rvecs" <<  rvecs[i][0] << " " << rvecs[i][1] << " " << rvecs[i][2] <<endl;
+                cout<< "tvecs" <<  tvecs[i][0] << " " << tvecs[i][1] << " " << tvecs[i][2] <<endl;
+
+            }
+        }
+        cout<< "aruco detect duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
+    
+
     // cv::imwrite("photo_undistorted.jpg", photo_undistorted);
-
-
         // cv::Rect2d cropZone = cv::selectROI(photo);
         //  cout<<"selection " << cropZone <<endl; 
+
+        start = clock(); 
+
 
         // Extract right/left zone 
         cv::Mat rightZone = photo_undistorted(cropZoneRight);
@@ -131,8 +162,6 @@ int main ( int argc,char **argv )
         cv::cvtColor( rightZone, rightZone_hsv, cv::COLOR_BGR2HSV);
         cv::cvtColor( leftZone, leftZone_hsv, cv::COLOR_BGR2HSV);
         cv::cvtColor( centerZone, centerZone_hsv, cv::COLOR_BGR2HSV);
-
-
       
         // right color mask 
         cv::Mat rightMaskRed, rightMaskGreen;  // NB: green mask is also use as 2nd mask for red detection
@@ -174,13 +203,9 @@ int main ( int argc,char **argv )
         centerZoneDetection(centerMaskGreen, centerZone, cv::Scalar(168, 255, 0) );
         centerZoneDetection(centerMaskRed, centerZone, cv::Scalar(0, 162, 255) );
        
-
-
         // Various display
         cv::rectangle( photo_undistorted, cropZoneLeft.tl(), cropZoneLeft.br(), ColorWhite, 1);
         cv::rectangle( photo_undistorted, cropZoneRight.tl(), cropZoneRight.br(), ColorWhite, 1);
-
-
 
         cout<< "compute duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
       
