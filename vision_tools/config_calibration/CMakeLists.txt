@@ -1,0 +1,17 @@
+#####################################
+cmake_minimum_required (VERSION 2.8) 
+project (raspicam_test)
+find_package(raspicam REQUIRED)
+find_package(OpenCV REQUIRED core videoio imgcodecs imgproc highgui calib3d)
+find_library(libconfig config++)
+IF  ( OpenCV_FOUND AND raspicam_CV_FOUND)
+	MESSAGE(STATUS "COMPILING OPENCV TESTS")
+	MESSAGE(STATUS " ${raspicam_CV_LIBS}")
+	add_executable (config_calib main.cpp)  
+	target_link_libraries (config_calib ${raspicam_CV_LIBS} opencv_videoio opencv_imgcodecs opencv_imgproc opencv_highgui opencv_calib3d config++)
+	target_compile_options(config_calib PUBLIC  $<$<COMPILE_LANGUAGE:CXX>:-O2>)
+	configure_file(fisheye_KD fisheye_KD COPYONLY)
+ELSE()
+	MESSAGE(FATAL_ERROR "OPENCV NOT FOUND IN YOUR SYSTEM")
+ENDIF()
+#####################################
