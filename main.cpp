@@ -72,6 +72,38 @@ int main ( int argc,char **argv )
     root["center_roi"].lookupValue("height", height);
     cv::Rect2d cropCenterZone(x, y, width,height);
 
+    int hue_min, hue_max, saturation_min, saturation_max, value_min, value_max;
+    root["green"].lookupValue("hue_min", hue_min);
+    root["green"].lookupValue("hue_max", hue_max);
+    root["green"].lookupValue("saturation_min", saturation_min);
+    root["green"].lookupValue("saturation_max", saturation_max);
+    root["green"].lookupValue("value_min", value_min);
+    root["green"].lookupValue("value_max", value_max);
+    cv::Scalar green_hsv_low_threshold(hue_min, saturation_min, value_min);
+    cv::Scalar green_hsv_high_threshold(hue_max, saturation_max, value_max);
+    cout << " hue_min:" << hue_min;
+    cout << " hue_max:" << hue_max << endl;
+    /**
+    * NB: Hue value range is [0;180] and is wrapped.
+    *   Red colors are located near 0 ( ie: also 180).
+    *  So in the case of red color, the applied threshold is :
+    *    [minVal ; 180] or [0 ; maxVal]
+    */
+    root["red"].lookupValue("hue_min", hue_min);
+    root["red"].lookupValue("hue_max", hue_max);
+    root["red"].lookupValue("saturation_min", saturation_min);
+    root["red"].lookupValue("saturation_max", saturation_max);
+    root["red"].lookupValue("value_min", value_min);
+    root["red"].lookupValue("value_max", value_max);
+    cv::Scalar red_hsv_low_threshold(hue_min, saturation_min, value_min);
+    cv::Scalar red_hsv_max_range_threshold(180, saturation_max, value_max);
+    cv::Scalar red_hsv_zero_threshold(0, saturation_min, value_min);
+    cv::Scalar red_hsv_high_threshold(hue_max, saturation_max, value_max);
+    cout << " hue_min:" << hue_min;
+    cout << " hue_max:" << hue_max << endl;
+
+    
+
     time_t timer_begin,timer_end;
     raspicam::RaspiCam_Still_Cv Camera;
     cv::Mat photo, photo_undistorted;
@@ -165,24 +197,24 @@ int main ( int argc,char **argv )
       
         // right color mask 
         cv::Mat rightMaskRed, rightMaskGreen;  // NB: green mask is also use as 2nd mask for red detection
-        cv::inRange(rightZone_hsv, cv::Scalar(0, 100, 70), cv::Scalar(8, 255, 255), rightMaskRed);
-        cv::inRange(rightZone_hsv, cv::Scalar(170, 100, 70), cv::Scalar(180, 255, 255), rightMaskGreen);
+        cv::inRange(rightZone_hsv, red_hsv_low_threshold, red_hsv_max_range_threshold, rightMaskGreen);
+        cv::inRange(rightZone_hsv, red_hsv_zero_threshold, red_hsv_high_threshold, rightMaskRed);
         rightMaskRed |= rightMaskGreen ;
-        cv::inRange(rightZone_hsv, cv::Scalar(40, 50, 30), cv::Scalar(80, 255, 255), rightMaskGreen);
+        cv::inRange(rightZone_hsv, green_hsv_low_threshold, green_hsv_high_threshold, rightMaskGreen);
 
         // left color mask 
         cv::Mat leftMaskRed, leftMaskGreen;
-        cv::inRange(leftZone_hsv, cv::Scalar(0, 100, 70), cv::Scalar(8, 255, 255), leftMaskRed);
-        cv::inRange(leftZone_hsv, cv::Scalar(170, 100, 70), cv::Scalar(180, 255, 255), leftMaskGreen);
+        cv::inRange(leftZone_hsv, red_hsv_low_threshold, red_hsv_max_range_threshold, leftMaskGreen);
+        cv::inRange(leftZone_hsv, red_hsv_zero_threshold, red_hsv_high_threshold, leftMaskRed);
         leftMaskRed |= leftMaskGreen;
-        cv::inRange(leftZone_hsv, cv::Scalar(40, 50, 30), cv::Scalar(80, 255, 255), leftMaskGreen);
+        cv::inRange(leftZone_hsv, green_hsv_low_threshold, green_hsv_high_threshold, leftMaskGreen);
 
         // center color mask 
         cv::Mat centerMaskRed, centerMaskGreen;
-        cv::inRange(centerZone_hsv, cv::Scalar(0, 100, 70), cv::Scalar(8, 255, 255), centerMaskRed);
-        cv::inRange(centerZone_hsv, cv::Scalar(170, 100, 70), cv::Scalar(180, 255, 255), centerMaskGreen);
+        cv::inRange(centerZone_hsv, red_hsv_low_threshold, red_hsv_max_range_threshold, centerMaskGreen);
+        cv::inRange(centerZone_hsv, red_hsv_zero_threshold, red_hsv_high_threshold, centerMaskRed);
         centerMaskRed |= centerMaskGreen;
-        cv::inRange(centerZone_hsv, cv::Scalar(40, 50, 30), cv::Scalar(80, 255, 255), centerMaskGreen);
+        cv::inRange(centerZone_hsv, green_hsv_low_threshold, green_hsv_high_threshold, centerMaskGreen);
 
 
         /*

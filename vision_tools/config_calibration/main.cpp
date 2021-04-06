@@ -55,40 +55,42 @@ int main ( int argc,char **argv )
 
     libconfig::Config cfg;
     libconfig::Setting& root = cfg.getRoot();
-    libconfig::Setting &left_roi = root.add("left_roi", libconfig::Setting::TypeGroup);
+    
    
     cout<<"Warm up... "<<endl; 
     sleep(3);    
     cout<<"Capturing " <<endl;
+
+    Camera.grab();
+    Camera.retrieve ( photo);
+    cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+
     
 
-    while(1)
-    {
- 
-        clock_t start = clock();
-        Camera.grab();
-        Camera.retrieve ( photo);
-        cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+    cv::Rect2d cropZone = cv::selectROI("Select left zone", photo_undistorted);
+    libconfig::Setting &left_roi = root.add("left_roi", libconfig::Setting::TypeGroup);
+    left_roi.add("x", libconfig::Setting::TypeInt) = (int)cropZone.x ;
+    left_roi.add("y", libconfig::Setting::TypeInt) = (int)cropZone.y ;
+    left_roi.add("width", libconfig::Setting::TypeInt) = (int)cropZone.width ;
+    left_roi.add("height", libconfig::Setting::TypeInt) = (int)cropZone.height ;
 
+    cropZone = cv::selectROI("Select right zone", photo_undistorted);
+    libconfig::Setting &right_roi = root.add("right_roi", libconfig::Setting::TypeGroup);
+    right_roi.add("x", libconfig::Setting::TypeInt) = (int)cropZone.x ;
+    right_roi.add("y", libconfig::Setting::TypeInt) = (int)cropZone.y ;
+    right_roi.add("width", libconfig::Setting::TypeInt) = (int)cropZone.width ;
+    right_roi.add("height", libconfig::Setting::TypeInt) = (int)cropZone.height ;
 
+    cropZone = cv::selectROI("Select center zone", photo_undistorted);
+    libconfig::Setting &center_roi = root.add("center_roi", libconfig::Setting::TypeGroup);
+    center_roi.add("x", libconfig::Setting::TypeInt) = (int)cropZone.x ;
+    center_roi.add("y", libconfig::Setting::TypeInt) = (int)cropZone.y ;
+    center_roi.add("width", libconfig::Setting::TypeInt) = (int)cropZone.width ;
+    center_roi.add("height", libconfig::Setting::TypeInt) = (int)cropZone.height ;
 
-        cv::Rect2d cropZone = cv::selectROI("Select left zone", photo_undistorted);
-
-        
-        left_roi.add("x", libconfig::Setting::TypeInt) = (int)cropZone.x ;
-        left_roi.add("y", libconfig::Setting::TypeInt) = (int)cropZone.y ;
-        left_roi.add("width", libconfig::Setting::TypeInt) = (int)cropZone.width ;
-        left_roi.add("height", libconfig::Setting::TypeInt) = (int)cropZone.height ;
-        cfg.writeFile("test.cfg");
-         
-         cout <<"selection x" << cropZone.x 
-         <<"selection y" << cropZone.y 
-         <<"selection width" << cropZone.width 
-         <<"selection height" << cropZone.height 
-         <<endl; 
-
-        cout<<"Stop camera..."<<endl;
-        Camera.release();
-   }
+    cfg.writeFile("vision.cfg");
+    cout << "configuration written to vision.cfg file" << endl;   
+    
+    Camera.release();
  return 0;
 }
