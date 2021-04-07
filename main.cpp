@@ -11,16 +11,16 @@
 #include <cmath> 
 #include <assert.h>
 #include <libconfig.h++>
+#include "predefined_colors.hpp"
+#include "dock_zone_detection.hpp"
+#include "center_zone_detection.hpp"
 
 using namespace std; 
 
-cv::Mat K, D;
-cv::Mat fisheye_map1, fisheye_map2;
-cv::Scalar ColorWhite(255, 255, 255, 0);
+static cv::Mat K, D;
+static cv::Mat fisheye_map1, fisheye_map2;
 
-static void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone);
-static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &centerZoneMask_closed);
-static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor );
+
 
 const int32_t aruco_table_pos_x = 1500;
 const int32_t aruco_table_pos_y = 1250;
@@ -81,8 +81,7 @@ int main ( int argc,char **argv )
     root["green"].lookupValue("value_max", value_max);
     cv::Scalar green_hsv_low_threshold(hue_min, saturation_min, value_min);
     cv::Scalar green_hsv_high_threshold(hue_max, saturation_max, value_max);
-    cout << " hue_min:" << hue_min;
-    cout << " hue_max:" << hue_max << endl;
+    
     /**
     * NB: Hue value range is [0;180] and is wrapped.
     *   Red colors are located near 0 ( ie: also 180).
@@ -99,8 +98,7 @@ int main ( int argc,char **argv )
     cv::Scalar red_hsv_max_range_threshold(180, saturation_max, value_max);
     cv::Scalar red_hsv_zero_threshold(0, saturation_min, value_min);
     cv::Scalar red_hsv_high_threshold(hue_max, saturation_max, value_max);
-    cout << " hue_min:" << hue_min;
-    cout << " hue_max:" << hue_max << endl;
+
 
     
 
@@ -123,23 +121,15 @@ int main ( int argc,char **argv )
 
     while(1)
     {
- 
         clock_t start = clock();
         Camera.grab();
         Camera.retrieve ( photo);
-
-
-      
-        cv::imshow( "photo", photo );
-        cv::waitKey(0);
-        
         cout<< "capture duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
        
 
 
         start = clock();
         cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
-
         cout<< "fisheye compensation duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
         start = clock(); 
 
@@ -153,10 +143,9 @@ int main ( int argc,char **argv )
 
         cout << "markerIds.size()" << markerIds.size() << endl;
 
-    // if at least one marker detected
+        // if at least one marker detected
         if (markerIds.size() > 0)
         {
-            cout << "markerIds[0]" << markerIds[0] << endl;
             cv::aruco::drawDetectedMarkers(photo_undistorted, markerCorners, markerIds);
          
             std::vector<cv::Vec3d> rvecs, tvecs;
@@ -173,12 +162,7 @@ int main ( int argc,char **argv )
         cout<< "aruco detect duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
     
 
-    // cv::imwrite("photo_undistorted.jpg", photo_undistorted);
-        // cv::Rect2d cropZone = cv::selectROI(photo);
-        //  cout<<"selection " << cropZone <<endl; 
-
         start = clock(); 
-
 
         // Extract right/left zone 
         cv::Mat rightZone = photo_undistorted(cropZoneRight);
@@ -253,205 +237,3 @@ int main ( int argc,char **argv )
 
 
 
-static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &centerZoneMask_closed, cv::Mat &centerZoneMask_separated    )
-{
-    vector<vector<cv::Point> > contours;
-    cv::findContours(centerZoneMask_closed, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-    cv::Mat detectedObjectContourMask = cv::Mat::ones(centerZoneMask_closed.rows, centerZoneMask_closed.cols, CV_8UC1);
-    detectedObjectContourMask.setTo(255);
-    float oneElementAreaSize = 2000; // TODO : depends de la hauteur de l'objet dans l'image !!
-    for (size_t contour = 0; contour < contours.size(); contour++)
-    {
-        float area = contourArea(contours[contour]);
-        int nbOjectInArea = round(area/oneElementAreaSize);
-        cout << "area " << area << "/" << oneElementAreaSize << "=" << nbOjectInArea << endl;
-
-        if( nbOjectInArea < 2)
-            continue;
-
-        cv::Mat areaMat = cv::Mat::zeros(centerZoneMask_closed.rows, centerZoneMask_closed.cols, CV_8UC1);
-        cv::drawContours(areaMat, contours, contour, cv::Scalar(255), -1);
-
-
-        int count=0;
-        for (cv::MatIterator_<uint8_t> it = areaMat.begin<uint8_t>(); it != areaMat.end<uint8_t>(); ++it)
-            if( *it > 0 ) count++;
-
-        cv::Mat kmeanPoints(count, 1 , CV_32FC2);
-        int currentIdx=0;
-        for( int x = 0; x < areaMat.rows; x++ ) 
-        {
-           for( int y = 0; y < areaMat.cols; y++ ) 
-           {
-                if( areaMat.at<uint8_t>(x,y) > 0 )
-                {
-                    kmeanPoints.at<cv::Vec2f>(currentIdx++) = cv::Vec2f((float)y,(float)x);
-                }
-           }
-        }
-
-        cv::Mat labels;
-        std::vector<cv::Point2f> centers;
-        cv::kmeans( kmeanPoints, nbOjectInArea, labels,
-                    cv::TermCriteria( cv::TermCriteria::EPS+cv::TermCriteria::COUNT, 10, 1.0),
-                    3, cv::KMEANS_PP_CENTERS, centers);
-
-        for( int clusterNum=0; clusterNum<nbOjectInArea; clusterNum++)
-        {
-            cv::Mat currentClusterShape = cv::Mat::zeros(centerZoneMask_closed.rows, centerZoneMask_closed.cols, CV_8UC1);
-            for(int  i = 0; i < count; i++ )
-            {
-                int clusterIdx = labels.at<int>(i);
-                if( clusterNum != clusterIdx)
-                    continue;
-
-                cv::Point ipt = kmeanPoints.at<cv::Point2f>(i);
-                currentClusterShape.at<uint8_t>(ipt) = 255;
-            }
-
-            vector<vector<cv::Point> > cluster_contours;
-            cv::findContours(currentClusterShape, cluster_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-            assert(cluster_contours.size() < 2);
-            cv::drawContours(detectedObjectContourMask, cluster_contours, -1, cv::Scalar(0), 2);
-        }
-    } 
-
-
-    cv::bitwise_and(centerZoneMask,centerZoneMask, centerZoneMask_separated, detectedObjectContourMask);
-
-}
-
-
-static void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor )
-{
-
-    int kernel_close_size= 2;
-    cv::Mat kernel_close = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_close_size*2+1, kernel_close_size*2+1));
-
-    cv::Mat centerZoneMask_closed;
-    cv::morphologyEx(centerZoneMask, centerZoneMask_closed, cv::MORPH_CLOSE,kernel_close, cv::Point(-1,-1),  2);
-
-
-    cv::Mat centerZoneMask_separated;
-    trySeparateOverlappingElement(centerZoneMask, centerZoneMask_closed, centerZoneMask_separated);
-
-   
-    cv::Mat centerZoneMask_opened;
-    int kernel_open_size= 3;
-    cv::Mat kernel_open = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_open_size*2+1, kernel_open_size*2+1));
-    cv::morphologyEx(centerZoneMask_separated, centerZoneMask_opened, cv::MORPH_OPEN,kernel_open, cv::Point(-1,-1),  5);
-
-
-    cv::Mat sure_bg;
-    cv::dilate(centerZoneMask, sure_bg, kernel_open, cv::Point(-1,-1), 3);
-
-    
-    cv::Mat centerMaskDist;
-    cv::distanceTransform(centerZoneMask_opened, centerMaskDist, cv::DIST_L2, 5);
-
-
-    double maxVal;     
-    cv::minMaxLoc( centerMaskDist, 0, &maxVal, 0, 0 );
-    cv::Mat sure_fg;
-    cv::threshold(centerMaskDist,sure_fg, 0.5*maxVal,255,cv::THRESH_BINARY);
-
-    // Pour pouvoir afficher le dist transform
-    cv::normalize(centerMaskDist,centerMaskDist,0,1,cv::NORM_MINMAX);
-
-    sure_fg.convertTo(sure_fg, CV_8U, 10);
-
-    vector<vector<cv::Point> > fg_contours;
-    cv::findContours(sure_fg, fg_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-    cv::Mat unknow = sure_bg-sure_fg;
-
-    cv::Mat markers;
-    cv::connectedComponents(sure_fg, markers);
-    markers +=1;
-    markers.setTo(0, unknow==255);
-
-    cv::watershed(centerZoneImage, markers);
-
-    for (size_t i = 0; i < fg_contours.size(); i++)
-    {
-        double area = contourArea(fg_contours[i]);
-        cv::Moments moment = cv::moments(fg_contours[i]);
-        cv::Point center(moment.m10 / (moment.m00+1e-5), moment.m01 / (moment.m00+1e-5));
-        cv::circle( centerZoneImage, center, 5, circleColor, -1 );
-    }
-
-    centerZoneImage.setTo( cv::Scalar(255, 255, 255), markers==-1);
-}
-
-
-
-static void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone)
-{
-    constexpr int nbCup = 5;
-    constexpr int nbChunk = 6; // the image is divided in 6 chunk and the 1st cup is in the 2 first chunk 
-    int chunkWidth = boundRect.width / nbChunk;
-
-    cv::Point origin = boundRect.tl();
-    cv::Point originBr = boundRect.br();
-
-    cv::Scalar ColorGreen(0, 255, 0);
-    cv::Scalar ColorRed  (0, 0, 255);
-    cv::Scalar Colorblack  (0, 0, 0);
-        
-
-    for(int cup=0; cup<nbCup; cup++)
-    {
-        int cupWidth;
-        if(isRightZone)
-            cupWidth = (cup == 0) ? 2*chunkWidth : chunkWidth;
-        else
-            cupWidth = (cup == nbCup-1) ? 2*chunkWidth : chunkWidth;
-
-        int currentZoneXstart;
-        if(isRightZone)
-            currentZoneXstart =  (cup == 0) ? 0 : (cup+1)*chunkWidth;
-        else
-            currentZoneXstart =  cup*chunkWidth;
-
-
-        cv::Point tl(origin.x + currentZoneXstart, origin.y);
-        cv::Point br(tl.x + cupWidth, tl.y + boundRect.height);
-        cv::Rect roi(tl, br);
-
-        cv::Mat subGreen = greenMask(roi);
-        int nbGreen = 0;
-        for (cv::MatIterator_<uint8_t> it = subGreen.begin<uint8_t>(); it != subGreen.end<uint8_t>(); ++it)
-        {
-            nbGreen += *it;
-        }
-
-        cv::Mat subRed = redMask(roi);
-        int nbRed = 0;
-        for (cv::MatIterator_<uint8_t> it = subRed.begin<uint8_t>(); it != subRed.end<uint8_t>(); ++it)
-        {
-            nbRed += *it;
-        }
-
-        int nb_pixel_in_zone = subRed.rows * subRed.cols;
-        
-        if( nbRed < 0.1*nb_pixel_in_zone  && nbGreen < 0.1*nb_pixel_in_zone )
-        {
-           cv::rectangle(   zone, tl, br, ColorWhite, 10);
-            cout << "cup :" << cup << "  unknown" << endl;   
-        }
-        else if( nbRed > nbGreen)
-        {
-            cv::rectangle(   zone, tl, br, ColorRed, 10);
-            cout << "cup :" << cup << " Red" << endl;    
-        }
-        else
-        {
-            cv::rectangle(   zone, tl, br, ColorGreen, 10);
-            cout << "cup :" << cup << " Green"<< endl;    
-        }
-
-
-        cv::rectangle(   zone, tl, br, Colorblack);
-    }
-}
