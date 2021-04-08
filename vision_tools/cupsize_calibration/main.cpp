@@ -20,9 +20,32 @@ cv::Mat fisheye_map1, fisheye_map2;
 cv::Scalar ColorWhite (255, 255, 255, 0);
 cv::Scalar Colorblue (255, 0, 0);
 
-void on_change(int state,void *zob)
-{
 
+#define DISPLAY_NAME "photo"
+bool new_photo = true;
+bool retry = false;
+
+void on_compute(int state,void *zob)
+{
+    new_photo = false;
+    cv::destroyWindow (DISPLAY_NAME);
+}
+
+void on_new_photo(int state,void *zob)
+{
+    new_photo = true;
+    cv::destroyWindow (DISPLAY_NAME);
+}
+
+void on_OK(int state,void *zob)
+{
+    cv::destroyWindow (DISPLAY_NAME);
+}
+
+void on_retry(int state,void *zob)
+{
+    retry = true;
+    cv::destroyWindow (DISPLAY_NAME);
 }
 
 
@@ -48,7 +71,6 @@ int main ( int argc,char **argv )
         cerr<<"Error retrieving map file for fisheye undistortion in fisheye_map"<<endl;
         return -1;
     }
-
 
     libconfig::Config cfg;
     cfg.readFile("vision.cfg");
@@ -83,37 +105,44 @@ int main ( int argc,char **argv )
         return -1;
     }
 
-    
-   
     cout<<"Warm up... "<<endl; 
     sleep(3);    
     cout<<"Capturing " <<endl;
+
+    float cups_size[3][3];
 
     for(int i=0; i<3; i++)
     {
         for(int j=0; j<3; j++)
         {
-            Camera.grab();
-            Camera.retrieve ( photo);
-            cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
 
-            
-            // Draw center zone on image
-            cv::rectangle( photo_undistorted, centerZoneRect.tl(), centerZoneRect.br(), ColorWhite, 3);
+retry:
+            retry = false;
+            while( new_photo)
+            {
+                Camera.grab();
+                Camera.retrieve ( photo);
+                cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
 
-            // Then show the zone where the cup must be places
-            int radius = ((centerZoneRect.height + centerZoneRect.width)/2)*0.05;
-            cv::circle( photo_undistorted,cv::Point(centerZoneRect.x+ (i*0.5)*centerZoneRect.width, centerZoneRect.y+ (j*0.5)*centerZoneRect.height), radius, Colorblue, 4);
+                
+                // Draw center zone on image
+                cv::rectangle( photo_undistorted, centerZoneRect.tl(), centerZoneRect.br(), ColorWhite, 3);
 
-            // Show the image
+                // Then show the zone where the cup must be places
+                int radius = ((centerZoneRect.height + centerZoneRect.width)/2)*0.05;
+                cv::circle( photo_undistorted,cv::Point(centerZoneRect.x+ (i*0.5)*centerZoneRect.width, centerZoneRect.y+ (j*0.5)*centerZoneRect.height), radius, Colorblue, 4);
 
-            cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
-            cv::imshow( "photo_undistorted", photo_undistorted );
-            cv::displayOverlay("photo_undistorted", "Put a green cup in the rectangle, near to the circle \n Press CTRL+P to access panel and see control buttons");
-            cv::createButton("Get Another image", on_change);
-            cv::createButton("Compute area", on_change);
-            cv::waitKey(0);
-            cv::destroyWindow ("photo_undistorted");
+                // Show the image
+                new_photo = true;
+                cv::namedWindow(DISPLAY_NAME,cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+                cv::imshow( DISPLAY_NAME, photo_undistorted );
+                cv::displayOverlay(DISPLAY_NAME, "Put a green cup in the rectangle, near to the circle \n Press CTRL+P to access panel and see control buttons");
+                cv::createButton("Capture an another photo", on_new_photo);
+                cv::createButton("Compute area", on_compute);
+                cv::waitKey(0);
+                
+            }
+            new_photo = true;
 
             // grab a another image to compute area zone
             Camera.grab();
@@ -135,22 +164,50 @@ int main ( int argc,char **argv )
 
             vector<vector<cv::Point> > contours;
             cv::findContours(centerMaskGreen_closed, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-            if( contours.size() != 1)
+
+            double maxArea=0;
+            int maxAreaIdx=-1;
+            for(int i=0; i<contours.size(); i++)
             {
-                // Error, retry ?
+                double area = contourArea(contours[i]);
+                if( area > maxArea )
+                {
+                    maxArea = area;
+                    maxAreaIdx = i;
+                }
             }
+            if( maxAreaIdx == -1)
+                goto retry;
 
-            double area = contourArea(contours[0]);
-            cout << "area "  << area << endl;
+            cv::Mat colored_display;
+            cv::cvtColor( centerMaskGreen_closed, colored_display,  cv::COLOR_GRAY2BGR);
+            cv::drawContours(colored_display, contours, maxAreaIdx, Colorblue, 5);
+            
 
-            cv::namedWindow("centerZone",cv::WINDOW_NORMAL);
-            cv::createButton("btn", on_change);
-            cv::imshow( "centerZone", centerMaskGreen_closed );
+            cv::namedWindow(DISPLAY_NAME,cv::WINDOW_NORMAL);
+            cv::createButton("OK", on_OK);
+            cv::createButton("retry", on_retry);
+            cv::imshow( DISPLAY_NAME, colored_display );
             cv::waitKey(0);
-            cv::destroyWindow ("centerZone");
+
+            if(retry)
+                goto retry;
+
+            cups_size[i][j] = maxArea;
         }
     }
+
+    libconfig::Config cfg_cup_size;
+    libconfig::Setting& cup_size_root = cfg_cup_size.getRoot();
+    libconfig::Setting &cup_size_array = cup_size_root.add("cup_size", libconfig::Setting::TypeArray);
+
+    for(int i=0; i<3; i++)
+        for(int j=0; j<3; j++)
+            cup_size_array.add(libconfig::Setting::TypeFloat) = cups_size[i][j];
     
+    cfg_cup_size.writeFile("cup_size.cfg");
+    cout << "configuration writen to cup_size.cfg file, merge config in vision.cfg" << endl;
+
     Camera.release();
  return 0;
 }
