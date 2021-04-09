@@ -111,9 +111,9 @@ int main ( int argc,char **argv )
 
     float cups_size[3][3];
 
-    for(int i=0; i<3; i++)
+    for(int line=0; line<3; line++)
     {
-        for(int j=0; j<3; j++)
+        for(int col=0; col<3; col++)
         {
 
 retry:
@@ -130,7 +130,7 @@ retry:
 
                 // Then show the zone where the cup must be places
                 int radius = ((centerZoneRect.height + centerZoneRect.width)/2)*0.05;
-                cv::circle( photo_undistorted,cv::Point(centerZoneRect.x+ (i*0.5)*centerZoneRect.width, centerZoneRect.y+ (j*0.5)*centerZoneRect.height), radius, Colorblue, 4);
+                cv::circle( photo_undistorted,cv::Point(centerZoneRect.x+ (col*0.5)*centerZoneRect.width, centerZoneRect.y+ (line*0.5)*centerZoneRect.height), radius, Colorblue, 4);
 
                 // Show the image
                 new_photo = true;
@@ -193,7 +193,7 @@ retry:
             if(retry)
                 goto retry;
 
-            cups_size[i][j] = maxArea;
+            cups_size[line][col] = maxArea;
         }
     }
 
