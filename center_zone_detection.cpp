@@ -12,9 +12,97 @@
 #include <assert.h>
 #include "predefined_colors.hpp"
 #include "center_zone_detection.hpp"
-
+#include  <cmath>
+#include <list>
 
 using namespace std; 
+
+float cups_size[3][3] = 
+{
+    {5,6,7},
+    {8,9,10},
+    {11,12,13}
+};
+
+/*
+ * This function try to estimate the size of a cup at cupPosition,
+ *   based on 9 measured cupsize inside the centerZoneMask
+ */
+static float oneCupSizeInThisArea(cv::Point &cupPosition, cv::Mat &centerZoneMask)
+{
+    // Internal type & functions
+    typedef struct
+    {
+        float distance;
+        float cupSize;
+    } cupsize_reference_t;
+
+    auto compare_cupsize_reference_distance = [] (const cupsize_reference_t& first, const cupsize_reference_t& second) {
+        return first.distance < second.distance;
+    };
+
+    uint32_t const centerWidth = centerZoneMask.cols/2;
+    uint32_t const centerHeight = centerZoneMask.rows/2;
+
+    // 1st determine the indexes of the points around the position of the cup in the cups_size tab
+    uint32_t const widthLowerIndex = cupPosition.x/centerWidth;
+    uint32_t const widthUpperIndex = widthLowerIndex+1;
+    uint32_t const heightLowerIndex = cupPosition.y/centerHeight;
+    uint32_t const heightUpperIndex = heightLowerIndex+1;
+
+    // Compute the distance to theses points around the position of the cup
+    std::vector<cupsize_reference_t> closest_cupsize_reference;
+    for(uint32_t heightIndex = heightLowerIndex; heightIndex <= heightUpperIndex; heightIndex++)
+    {
+        for(uint32_t widthIndex = widthLowerIndex; widthIndex <= widthUpperIndex; widthIndex++)
+        {
+            float currentIndex_x = widthIndex * centerWidth;
+            float currentIndex_y = heightIndex * centerHeight;
+
+            float distance = sqrt( float(   (currentIndex_x-cupPosition.x)*(currentIndex_x-cupPosition.x) 
+                                      + (currentIndex_y-cupPosition.y)*(currentIndex_y-cupPosition.y) ) );
+            cupsize_reference_t cupsize_ref = { .distance = distance, .cupSize = cups_size[heightIndex][widthIndex]};
+            closest_cupsize_reference.push_back(cupsize_ref);
+        }   
+    }
+    assert(closest_cupsize_reference.size() == 4);
+
+    // Sort by distance to remove the farest one
+    sort (closest_cupsize_reference.begin(), closest_cupsize_reference.end(), compare_cupsize_reference_distance); 
+    closest_cupsize_reference.pop_back();
+    
+    
+    /* Now compute the theorical size of a cup at the current position,
+     *   based on the 3 closest measured cupsize position
+     *  If you got 3 references points : A,B,C 
+     *  A_percentage is 1 / (1 + (dist(A)/dist(B)) + (dist(A)/dist(C)) )
+     *  B_percentage = 1 / (1 + (dist(B)/dist(A)) + (dist(B)/dist(C)) )
+     *  C_percentage = 1 / (1 + (dist(C)/dist(A)) + (dist(C)/dist(B)) )
+     */
+    float theorical_cupSize = 0;
+    theorical_cupSize += closest_cupsize_reference[0].cupSize * (1.0f/
+    (1.0f + closest_cupsize_reference[0].distance/closest_cupsize_reference[1].distance 
+         + closest_cupsize_reference[0].distance/closest_cupsize_reference[2].distance));
+
+    theorical_cupSize += closest_cupsize_reference[1].cupSize * (1.0f/
+    (1.0f + closest_cupsize_reference[1].distance/closest_cupsize_reference[0].distance 
+         + closest_cupsize_reference[1].distance/closest_cupsize_reference[2].distance));
+
+    theorical_cupSize += closest_cupsize_reference[2].cupSize * (1.0f/
+    (1.0f + closest_cupsize_reference[2].distance/closest_cupsize_reference[0].distance 
+         + closest_cupsize_reference[2].distance/closest_cupsize_reference[1].distance));
+
+
+#if 0
+    for( int i=0; i<3; i++)
+    {
+        cout << "dist=" << closest_cupsize_reference[i].distance << " cupSize=" << closest_cupsize_reference[i].cupSize << endl;
+    }
+    cout << "theoricalSize=" << theorical_cupSize << endl << endl;
+#endif
+
+    return theorical_cupSize;
+}
 
 
 static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &centerZoneMask_closed, cv::Mat &centerZoneMask_separated    )
@@ -24,12 +112,20 @@ static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &cent
 
     cv::Mat detectedObjectContourMask = cv::Mat::ones(centerZoneMask_closed.rows, centerZoneMask_closed.cols, CV_8UC1);
     detectedObjectContourMask.setTo(255);
-    float oneElementAreaSize = 2000; // TODO : depends de la hauteur de l'objet dans l'image !!
+
+
     for (size_t contour = 0; contour < contours.size(); contour++)
     {
-        float area = contourArea(contours[contour]);
+        float area = cv::contourArea(contours[contour]);
+ 
+        // if( round(area/tiniestAreaElement) < 2) // TODO add this condition, because in this case, there's no need to go further
+        //     continue;
+
+        cv::Moments moment = cv::moments(contours[contour]);
+        cv::Point center(moment.m10 / (moment.m00+1e-5), moment.m01 / (moment.m00+1e-5));
+        float oneElementAreaSize = oneCupSizeInThisArea(center, centerZoneMask);
+        
         int nbOjectInArea = round(area/oneElementAreaSize);
-        cout << "area " << area << "/" << oneElementAreaSize << "=" << nbOjectInArea << endl;
 
         if( nbOjectInArea < 2)
             continue;
@@ -139,7 +235,7 @@ void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::
 
     for (size_t i = 0; i < fg_contours.size(); i++)
     {
-        double area = contourArea(fg_contours[i]);
+        double area = cv::contourArea(fg_contours[i]);
         cv::Moments moment = cv::moments(fg_contours[i]);
         cv::Point center(moment.m10 / (moment.m00+1e-5), moment.m01 / (moment.m00+1e-5));
         cv::circle( centerZoneImage, center, 5, circleColor, -1 );
