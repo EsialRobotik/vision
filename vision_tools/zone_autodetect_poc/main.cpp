@@ -23,19 +23,32 @@ cv::Scalar ColorRed (0, 0, 255);
 
 void generateFisheyeUndistordMap(cv::Mat &map1, cv::Mat &map2)
 {
-
     cv::FileStorage file_kd("fisheye_KD", cv::FileStorage::READ);
     file_kd["K_mat"] >> K;
     file_kd["D_mat"] >> D;
     file_kd.release();
 
+    cout << "K=>" << K << endl;
+
     cv::Size img_size(1920, 1080);
     cv::fisheye::initUndistortRectifyMap(K, D, cv::Mat::eye(3, 3, CV_32F), K, img_size, CV_16SC2, map1, map2);
 }
 
+cv::Point positionOnTableFromPointInImage(cv::Point &pointInImage, cv::Mat &cameraMatrix, cv::Mat &rotationMatrix, cv::Mat &tvec)
+{
+    cv::Mat uvPoint = (cv::Mat_<double>(3,1) << pointInImage.x, pointInImage.y, 1);
+    cv::Mat leftSideMat  = rotationMatrix.inv() * cameraMatrix.inv() * uvPoint;
+    cv::Mat rightSideMat = rotationMatrix.inv() * tvec;
+
+    double s = rightSideMat.at<double>(2,0)/leftSideMat.at<double>(2,0); 
+    cv::Mat positionIn3d = rotationMatrix.inv() * (s * cameraMatrix.inv() * uvPoint - tvec);
+
+    cv::Point positionOnTable(positionIn3d.at<double>(0), positionIn3d.at<double>(1));
+    return positionOnTable;
+}
 
 
-void detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::Mat const  &K, cv::Mat const  &D, cv::Mat &rvec, cv::Mat &tvec )
+bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::Mat const  &K, cv::Mat const  &D, cv::Mat &rvec, cv::Mat &tvec )
 {
     vector<int> markerIds;
     vector<vector<cv::Point2f>> markerCorners, rejectedCandidates;
@@ -43,40 +56,73 @@ void detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
     cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_250);
     cv::aruco::detectMarkers(photo_undistorted, dictionary, markerCorners, markerIds, parameters, rejectedCandidates);
 
+    cout << " markerIds.size()" << markerIds.size() << endl;
 
     // if at least one marker detected
     if (markerIds.size() > 0)
-    {
         cv::aruco::drawDetectedMarkers(photo_undistorted, markerCorners, markerIds);
-        cout << " markerCorners=>" << markerCorners[0] << endl;
-       
-       // Position of the corner of the aruco tag on the eurobot table
-        vector<cv::Point3f> objectPosition;
-        objectPosition.push_back(cv::Point3f(1550.0, 1300.0, 0.0));
-        objectPosition.push_back(cv::Point3f(1450.0, 1300.0, 0.0));
-        objectPosition.push_back(cv::Point3f(1450.0, 1200.0, 0.0));
-        objectPosition.push_back(cv::Point3f(1550.0, 1200.0, 0.0));
-
-        for(int i=0 ; i<objectPosition.size(); i++)
-        {
-            cout << "corner:" <<markerCorners[0][i] << " <=> img:" << objectPosition[i] << endl;
-        }
-
-        bool solvedPnp = cv::solvePnP(objectPosition, markerCorners[0], K, D, rvec, tvec);
-        cout << " solvedPnp " << solvedPnp << endl;
-    }
     else
+        return false;
+
+   // Position of the corner of the aruco tag on the eurobot table
+    vector<cv::Point3f> objectPosition;
+    vector<cv::Point2f> objetImagePosition;
+
+    for (int marker_id = 0 ; marker_id < markerIds.size(); marker_id++)
     {
-        // ASSERT?  Try again ?
+        cout << " markerCorners=>" << markerCorners[marker_id] << endl;
+
+        if( markerIds[marker_id] == 42)
+        {
+            objectPosition.push_back(cv::Point3f(1550.0, 1300.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][0]);
+            
+            objectPosition.push_back(cv::Point3f(1450.0, 1300.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][1]);
+
+            objectPosition.push_back(cv::Point3f(1450.0, 1200.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][2]);
+
+            objectPosition.push_back(cv::Point3f(1550.0, 1200.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][3]);
+        }
+        else if( markerIds[marker_id] == 69)
+        {
+            // TODO !
+            // objectPosition.push_back(cv::Point3f(1550.0, 1300.0, 0.0));
+            // objetImagePosition.push_back(markerCorners[marker_id][0]);
+            
+            // objectPosition.push_back(cv::Point3f(1450.0, 1300.0, 0.0));
+            // objetImagePosition.push_back(markerCorners[marker_id][1]);
+
+            // objectPosition.push_back(cv::Point3f(1450.0, 1200.0, 0.0));
+            // objetImagePosition.push_back(markerCorners[marker_id][2]);
+
+            // objectPosition.push_back(cv::Point3f(1550.0, 1200.0, 0.0));
+            // objetImagePosition.push_back(markerCorners[marker_id][3]);
+        }
     }
+
+    cout << " Injected point in PnP solve " << endl;
+    for(int i=0 ; i<objectPosition.size(); i++)
+    {
+        cout << "corner:" <<objetImagePosition[i] << " <=> img:" << objectPosition[i] << endl;
+    }
+
+    cv::Mat emptyDist;
+    if( objectPosition.size() > 0)
+        return cv::solvePnP(objectPosition, markerCorners[0], K, emptyDist, rvec, tvec);
+    
+    return false;
 }
 
 
-cv::Rect2d findDockRight(cv::Mat const &K, cv::Mat const &D, cv::Mat const &rvec, cv::Mat const &tvec)
+cv::Rect2d localizeZone(cv::Mat const &K, cv::Mat const &D, cv::Mat const &rvec, cv::Mat const &tvec,
+                        float TL_x, float TL_y, float BR_x, float BR_y)
 {
     vector<cv::Point3f> objectPoint;
-    objectPoint.push_back(cv::Point3f(1060.0, 20.0, 0.0)); //TL
-    objectPoint.push_back(cv::Point3f(620.0, -150.0, 0.0)); // BR
+    objectPoint.push_back(cv::Point3f(TL_x, TL_y, 0.0)); //TL
+    objectPoint.push_back(cv::Point3f(BR_x, BR_y, 0.0)); // BR
 
      vector<cv::Point2f> imagePoint;
     cv::projectPoints(objectPoint, rvec, tvec, K, D, imagePoint);       
@@ -123,6 +169,7 @@ int main ( int argc,char **argv )
 
     raspicam::RaspiCam_Still_Cv Camera;
     cv::Mat photo, photo_undistorted;
+    cv::Mat rotationMatrix(3,3,cv::DataType<double>::type);
     
     Camera.set(cv::CAP_PROP_FRAME_WIDTH,  1920);
     Camera.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
@@ -145,14 +192,24 @@ int main ( int argc,char **argv )
     
     cv::Mat rvec;
     cv::Mat tvec;
-    detectArucoAndComputeRotVecMatrixes(photo_undistorted, K, D, rvec, tvec);
-    cv::Rect2d dockRight = findDockRight(K, D, rvec, tvec);
+    bool detection_ok = detectArucoAndComputeRotVecMatrixes(photo_undistorted, K, D, rvec, tvec);
+    if( detection_ok)
+    {
+        cv::Rodrigues(rvec,rotationMatrix);
+        cv::Point pointInImage(1074,626);
+        cv::Point positionOnTable = positionOnTableFromPointInImage(pointInImage, K, rotationMatrix, tvec);
+            std::cout << "pointInImage= " << pointInImage <<  " <=>  positionOnTable=" << positionOnTable << std::endl;
 
-    cout << "dockRight" << dockRight << endl;
 
-    cv::rectangle( photo_undistorted, dockRight.tl(), dockRight.br(), ColorWhite, 1);
-    cv::rectangle( photo_undistorted, cropZoneRight.tl(), cropZoneRight.br(), ColorRed, 1);
-   
+        cv::Mat emptyDist;
+        cv::Rect2d dockRight = localizeZone(K, D, rvec, tvec, 1060.0, 20.0, 620.0, -150.0);
+
+        cout << "dockRight" << dockRight << endl;
+
+        cv::rectangle( photo_undistorted, dockRight.tl(), dockRight.br(), ColorWhite, 1);
+        // cv::rectangle( photo_undistorted, cropZoneRight.tl(), cropZoneRight.br(), ColorRed, 1);
+    }
+
     cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);     
     cv::imshow( "photo_undistorted", photo_undistorted );
     cv::waitKey(0);
