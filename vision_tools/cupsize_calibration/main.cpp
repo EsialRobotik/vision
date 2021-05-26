@@ -84,14 +84,17 @@ int main ( int argc,char **argv )
     cv::Rect2d centerZoneRect(x, y, width,height);
 
     int hue_min, hue_max, saturation_min, saturation_max, value_min, value_max;
-    root["green"].lookupValue("hue_min", hue_min);
-    root["green"].lookupValue("hue_max", hue_max);
-    root["green"].lookupValue("saturation_min", saturation_min);
-    root["green"].lookupValue("saturation_max", saturation_max);
-    root["green"].lookupValue("value_min", value_min);
-    root["green"].lookupValue("value_max", value_max);
-    cv::Scalar green_hsv_low_threshold(hue_min, saturation_min, value_min);
-    cv::Scalar green_hsv_high_threshold(hue_max, saturation_max, value_max);
+    root["red"].lookupValue("hue_min", hue_min);
+    root["red"].lookupValue("hue_max", hue_max);
+    root["red"].lookupValue("saturation_min", saturation_min);
+    root["red"].lookupValue("saturation_max", saturation_max);
+    root["red"].lookupValue("value_min", value_min);
+    root["red"].lookupValue("value_max", value_max);
+    cv::Scalar red_hsv_low_threshold(hue_min, saturation_min, value_min);
+    cv::Scalar red_hsv_max_range_threshold(180, saturation_max, value_max);
+    cv::Scalar red_hsv_zero_threshold(0, saturation_min, value_min);
+    cv::Scalar red_hsv_high_threshold(hue_max, saturation_max, value_max);
+
 
 
     raspicam::RaspiCam_Still_Cv Camera;
@@ -136,7 +139,7 @@ retry:
                 new_photo = true;
                 cv::namedWindow(DISPLAY_NAME,cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
                 cv::imshow( DISPLAY_NAME, photo_undistorted );
-                cv::displayOverlay(DISPLAY_NAME, "Put a green cup in the rectangle, near to the circle \n Press CTRL+P to access panel and see control buttons");
+                cv::displayOverlay(DISPLAY_NAME, "Put a RED cup in the rectangle, near to the circle \n Press CTRL+P to access panel and see control buttons");
                 cv::createButton("Capture an another photo", on_new_photo);
                 cv::createButton("Compute area", on_compute);
                 cv::waitKey(0);
@@ -153,17 +156,19 @@ retry:
             cv::Mat centerZone_hsv;
             cv::cvtColor( centerZone, centerZone_hsv, cv::COLOR_BGR2HSV);
 
-            cv::Mat centerMaskGreen;
-            cv::inRange(centerZone_hsv, green_hsv_low_threshold, green_hsv_high_threshold, centerMaskGreen);
+            cv::Mat centerMaskRed, centerMaskRed2;
+            cv::inRange(centerZone_hsv, red_hsv_low_threshold, red_hsv_max_range_threshold, centerMaskRed2);
+            cv::inRange(centerZone_hsv, red_hsv_zero_threshold, red_hsv_high_threshold, centerMaskRed);
+            centerMaskRed |= centerMaskRed2 ;
 
             int kernel_close_size= 2;
             cv::Mat kernel_close = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_close_size*2+1, kernel_close_size*2+1));
 
-            cv::Mat centerMaskGreen_closed;
-            cv::morphologyEx(centerMaskGreen, centerMaskGreen_closed, cv::MORPH_CLOSE,kernel_close, cv::Point(-1,-1),  2);
+            cv::Mat centerMaskRed_closed;
+            cv::morphologyEx(centerMaskRed, centerMaskRed_closed, cv::MORPH_CLOSE,kernel_close, cv::Point(-1,-1),  2);
 
             vector<vector<cv::Point> > contours;
-            cv::findContours(centerMaskGreen_closed, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+            cv::findContours(centerMaskRed_closed, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
             double maxArea=0;
             int maxAreaIdx=-1;
@@ -180,7 +185,7 @@ retry:
                 goto retry;
 
             cv::Mat colored_display;
-            cv::cvtColor( centerMaskGreen_closed, colored_display,  cv::COLOR_GRAY2BGR);
+            cv::cvtColor( centerMaskRed_closed, colored_display,  cv::COLOR_GRAY2BGR);
             cv::drawContours(colored_display, contours, maxAreaIdx, Colorblue, 5);
             
 

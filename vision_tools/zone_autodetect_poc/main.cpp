@@ -74,32 +74,31 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
 
         if( markerIds[marker_id] == 42)
         {
-            objectPosition.push_back(cv::Point3f(1550.0, 1300.0, 0.0));
+            objectPosition.push_back(cv::Point3f(1200.0, 1450.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][0]);
             
-            objectPosition.push_back(cv::Point3f(1450.0, 1300.0, 0.0));
+            objectPosition.push_back(cv::Point3f(1200.0, 1550.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][1]);
 
-            objectPosition.push_back(cv::Point3f(1450.0, 1200.0, 0.0));
+            objectPosition.push_back(cv::Point3f(1300.0, 1550.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][2]);
 
-            objectPosition.push_back(cv::Point3f(1550.0, 1200.0, 0.0));
+            objectPosition.push_back(cv::Point3f(1300.0, 1450.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][3]);
         }
         else if( markerIds[marker_id] == 69)
         {
-            // TODO !
-            // objectPosition.push_back(cv::Point3f(1550.0, 1300.0, 0.0));
-            // objetImagePosition.push_back(markerCorners[marker_id][0]);
+            objectPosition.push_back(cv::Point3f(17.0, 1462.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][0]);
             
-            // objectPosition.push_back(cv::Point3f(1450.0, 1300.0, 0.0));
-            // objetImagePosition.push_back(markerCorners[marker_id][1]);
+            objectPosition.push_back(cv::Point3f(200.0, 1462.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][1]);
 
-            // objectPosition.push_back(cv::Point3f(1450.0, 1200.0, 0.0));
-            // objetImagePosition.push_back(markerCorners[marker_id][2]);
+            objectPosition.push_back(cv::Point3f(200.0, 1279.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][2]);
 
-            // objectPosition.push_back(cv::Point3f(1550.0, 1200.0, 0.0));
-            // objetImagePosition.push_back(markerCorners[marker_id][3]);
+            objectPosition.push_back(cv::Point3f(17.0, 1279.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][3]);
         }
     }
 
@@ -111,7 +110,7 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
 
     cv::Mat emptyDist;
     if( objectPosition.size() > 0)
-        return cv::solvePnP(objectPosition, markerCorners[0], K, emptyDist, rvec, tvec);
+        return cv::solvePnP(objectPosition, objetImagePosition, K, emptyDist, rvec, tvec, false, cv::SOLVEPNP_IPPE);
     
     return false;
 }
@@ -184,36 +183,49 @@ int main ( int argc,char **argv )
     cout<<"Capturing " <<endl;
 
 
-
-    // grab a another image to compute area zone
-    Camera.grab();
-    Camera.retrieve ( photo);
-    cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
-    
-    cv::Mat rvec;
-    cv::Mat tvec;
-    bool detection_ok = detectArucoAndComputeRotVecMatrixes(photo_undistorted, K, D, rvec, tvec);
-    if( detection_ok)
+    while ( 1)
     {
-        cv::Rodrigues(rvec,rotationMatrix);
-        cv::Point pointInImage(1074,626);
-        cv::Point positionOnTable = positionOnTableFromPointInImage(pointInImage, K, rotationMatrix, tvec);
-            std::cout << "pointInImage= " << pointInImage <<  " <=>  positionOnTable=" << positionOnTable << std::endl;
+        // grab a another image to compute area zone
+        Camera.grab();
+        Camera.retrieve ( photo);
+        cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+        
+        cv::Mat rvec;
+        cv::Mat tvec;
+        bool detection_ok = detectArucoAndComputeRotVecMatrixes(photo_undistorted, K, D, rvec, tvec);
+        if( detection_ok)
+        {
+            cv::Rodrigues(rvec,rotationMatrix);
+            cv::Point pointInImage(910,627);
+            cv::Point positionOnTable = positionOnTableFromPointInImage(pointInImage, K, rotationMatrix, tvec);
+            std::cout << "PM en haut à droite pointInImage= " << pointInImage <<  " <=>  positionOnTable=" << positionOnTable << std::endl;
+
+            cv::Point pointInImage1(805,733);
+            positionOnTable = positionOnTableFromPointInImage(pointInImage1, K, rotationMatrix, tvec);
+            std::cout << "PM en bas à gauche pointInImage= " << pointInImage1 <<  " <=>  positionOnTable=" << positionOnTable << std::endl;
 
 
-        cv::Mat emptyDist;
-        cv::Rect2d dockRight = localizeZone(K, D, rvec, tvec, 1060.0, 20.0, 620.0, -150.0);
+            cv::Mat emptyDist;
+            cv::Rect2d dockRight = localizeZone(K, D, rvec, tvec, 0, 1070.0, -165.0, 660.0);
 
-        cout << "dockRight" << dockRight << endl;
+            cout << "dockRight" << dockRight << endl;
+            cout << "dockRight.tl()" << dockRight.tl() << endl;
+            cout << "dockRight.br()" << dockRight.br() << endl;
 
-        cv::rectangle( photo_undistorted, dockRight.tl(), dockRight.br(), ColorWhite, 1);
-        // cv::rectangle( photo_undistorted, cropZoneRight.tl(), cropZoneRight.br(), ColorRed, 1);
+            cv::rectangle( photo_undistorted, dockRight.tl(), dockRight.br(), ColorRed, 1);
+            // cv::rectangle( photo_undistorted, cropZoneRight.tl(), cropZoneRight.br(), ColorRed, 1);
+        }
+        else
+        {
+            cout << "Unable to solvePnp" << endl;
+
+        }
+
+        cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);     
+        cv::imshow( "photo_undistorted", photo_undistorted );
+        cv::waitKey(0);
     }
-
-    cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);     
-    cv::imshow( "photo_undistorted", photo_undistorted );
-    cv::waitKey(0);
-
+    
     Camera.release();
- return 0;
+    return 0;
 }

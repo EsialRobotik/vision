@@ -17,12 +17,8 @@
 
 using namespace std; 
 
-float cups_size[3][3] = 
-{
-    {5,6,7},
-    {8,9,10},
-    {11,12,13}
-};
+extern float cups_size[3][3];
+
 
 /*
  * This function try to estimate the size of a cup at cupPosition,
@@ -183,25 +179,21 @@ static void trySeparateOverlappingElement(cv::Mat &centerZoneMask, cv::Mat &cent
 }
 
 
-void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor )
+void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::Scalar circleColor, vector<cv::Point> &cupList )
 {
-
     int kernel_close_size= 2;
     cv::Mat kernel_close = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_close_size*2+1, kernel_close_size*2+1));
 
     cv::Mat centerZoneMask_closed;
     cv::morphologyEx(centerZoneMask, centerZoneMask_closed, cv::MORPH_CLOSE,kernel_close, cv::Point(-1,-1),  2);
 
-
     cv::Mat centerZoneMask_separated;
     trySeparateOverlappingElement(centerZoneMask, centerZoneMask_closed, centerZoneMask_separated);
 
-   
     cv::Mat centerZoneMask_opened;
-    int kernel_open_size= 3;
+    int kernel_open_size= 2;
     cv::Mat kernel_open = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_open_size*2+1, kernel_open_size*2+1));
-    cv::morphologyEx(centerZoneMask_separated, centerZoneMask_opened, cv::MORPH_OPEN,kernel_open, cv::Point(-1,-1),  5);
-
+    cv::morphologyEx(centerZoneMask_separated, centerZoneMask_opened, cv::MORPH_OPEN,kernel_open, cv::Point(-1,-1),  4);
 
     cv::Mat sure_bg;
     cv::dilate(centerZoneMask, sure_bg, kernel_open, cv::Point(-1,-1), 3);
@@ -239,6 +231,7 @@ void centerZoneDetection(cv::Mat &centerZoneMask, cv::Mat &centerZoneImage, cv::
         cv::Moments moment = cv::moments(fg_contours[i]);
         cv::Point center(moment.m10 / (moment.m00+1e-5), moment.m01 / (moment.m00+1e-5));
         cv::circle( centerZoneImage, center, 5, circleColor, -1 );
+        cupList.push_back(center);
     }
 
     centerZoneImage.setTo( cv::Scalar(255, 255, 255), markers==-1);

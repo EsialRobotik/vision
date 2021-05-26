@@ -14,17 +14,19 @@
 #include "predefined_colors.hpp"
 #include "dock_zone_detection.hpp"
 #include "center_zone_detection.hpp"
+#include "position_detection.hpp"
 
 using namespace std; 
 
 static cv::Mat K, D;
 static cv::Mat fisheye_map1, fisheye_map2;
-
-
+static cv::Mat position_detection_rvec, position_detection_tvec;
+static cv::Mat rotationMatrix(3,3,cv::DataType<double>::type);
 
 const int32_t aruco_table_pos_x = 1500;
 const int32_t aruco_table_pos_y = 1250;
 
+float cups_size[3][3];
 
 void generateFisheyeUndistordMap(cv::Mat &map1, cv::Mat &map2)
 {
@@ -40,7 +42,6 @@ void generateFisheyeUndistordMap(cv::Mat &map1, cv::Mat &map2)
 
 int main ( int argc,char **argv ) 
 {
-   
     generateFisheyeUndistordMap( fisheye_map1, fisheye_map2);
     if( fisheye_map1.size().width == 0 || fisheye_map1.size().height == 0
         || fisheye_map2.size().width == 0 || fisheye_map2.size().height == 0)
@@ -49,28 +50,18 @@ int main ( int argc,char **argv )
         return -1;
     }
 
+    /**
+     * Read configuration from vision.cfg
+     */
+
     libconfig::Config cfg;
     cfg.readFile("vision.cfg");
     const libconfig::Setting& root = cfg.getRoot();
 
-    int x, y, width,height;
-    root["left_roi"].lookupValue("x", x);
-    root["left_roi"].lookupValue("y", y);
-    root["left_roi"].lookupValue("width", width);
-    root["left_roi"].lookupValue("height", height);
-    cv::Rect2d cropZoneLeft(x, y, width,height);
-    
-    root["right_roi"].lookupValue("x", x);
-    root["right_roi"].lookupValue("y", y);
-    root["right_roi"].lookupValue("width", width);
-    root["right_roi"].lookupValue("height", height);
-    cv::Rect2d cropZoneRight(x, y, width,height);
+    const libconfig::Setting &cup_size_settings = root.lookup("cup_size");
+    for (int n = 0; n < cup_size_settings.getLength(); ++n)
+        cups_size[n/3][n%3] =  cup_size_settings[n];
 
-    root["center_roi"].lookupValue("x", x);
-    root["center_roi"].lookupValue("y", y);
-    root["center_roi"].lookupValue("width", width);
-    root["center_roi"].lookupValue("height", height);
-    cv::Rect2d cropCenterZone(x, y, width,height);
 
     int hue_min, hue_max, saturation_min, saturation_max, value_min, value_max;
     root["green"].lookupValue("hue_min", hue_min);
@@ -100,7 +91,13 @@ int main ( int argc,char **argv )
     cv::Scalar red_hsv_high_threshold(hue_max, saturation_max, value_max);
 
 
-    
+    // ROI zones will be computed in position_detection
+    cv::Rect2d cropZoneLeft;
+    cv::Rect2d cropZoneRight;
+    cv::Rect2d cropCenterZone;
+    cv::Rect2d gagZone;
+    cv::Rect2d gagZone2;
+
 
     time_t timer_begin,timer_end;
     raspicam::RaspiCam_Still_Cv Camera;
@@ -117,7 +114,24 @@ int main ( int argc,char **argv )
     cout<<"Warm up... "<<endl; 
     sleep(3);    
     cout<<"Capturing " <<endl;
-    
+
+
+    Camera.grab();
+    Camera.retrieve ( photo);
+    cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+
+    bool position_detection_ok = detectArucoAndComputeRotVecMatrixes(photo_undistorted, K, D, position_detection_rvec, position_detection_tvec, rotationMatrix);
+    if( position_detection_ok)
+    {
+        cropZoneRight  = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 0.0, 1059.0, -134.0, 640.0);
+        cropZoneLeft   = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 0.0, 2359.0, -134.0, 1940.0);
+        cropCenterZone = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 500.0, 2000.0, 0.0, 1000.0);
+
+        gagZone = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 100.0, 100.0, 0.0, 0.0);
+        gagZone2 = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 1200.0, 3000.0, 1000.0, 0.0);
+
+    }
+
 
     while(1)
     {
@@ -125,43 +139,11 @@ int main ( int argc,char **argv )
         Camera.grab();
         Camera.retrieve ( photo);
         cout<< "capture duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
-       
 
 
         start = clock();
         cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
         cout<< "fisheye compensation duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
-        start = clock(); 
-
-
-       
-        vector<int> markerIds;
-        vector<vector<cv::Point2f>> markerCorners, rejectedCandidates;
-        cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
-        cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_250);
-        cv::aruco::detectMarkers(photo_undistorted, dictionary, markerCorners, markerIds, parameters, rejectedCandidates);
-
-        cout << "markerIds.size()" << markerIds.size() << endl;
-
-        // if at least one marker detected
-        if (markerIds.size() > 0)
-        {
-            cv::aruco::drawDetectedMarkers(photo_undistorted, markerCorners, markerIds);
-         
-            std::vector<cv::Vec3d> rvecs, tvecs;
-            cv::aruco::estimatePoseSingleMarkers(markerCorners, 0.05, K, D, rvecs, tvecs);   
-
-            for(int i=0; i<markerIds.size(); i++)
-            {
-                cv::aruco::drawAxis(photo_undistorted, K, D, rvecs[i], tvecs[i], 0.1);
-                cout<< "rvecs" <<  rvecs[i][0] << " " << rvecs[i][1] << " " << rvecs[i][2] <<endl;
-                cout<< "tvecs" <<  tvecs[i][0] << " " << tvecs[i][1] << " " << tvecs[i][2] <<endl;
-
-            }
-        }
-        cout<< "aruco detect duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
-    
-
         start = clock(); 
 
         // Extract right/left zone 
@@ -186,12 +168,31 @@ int main ( int argc,char **argv )
         rightMaskRed |= rightMaskGreen ;
         cv::inRange(rightZone_hsv, green_hsv_low_threshold, green_hsv_high_threshold, rightMaskGreen);
 
+        // Do an open/close on the right color mask to remove noise
+        int kernel_open_size= 3;
+        cv::Mat kernel_open = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_open_size*2+1, kernel_open_size*2+1));
+        int kernel_close_size= 2;
+        cv::Mat kernel_close = getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernel_close_size*2+1, kernel_close_size*2+1));
+
+        cv::morphologyEx(rightMaskGreen, rightMaskGreen, cv::MORPH_OPEN,kernel_open, cv::Point(-1,-1),  2);
+        cv::morphologyEx(rightMaskGreen, rightMaskGreen, cv::MORPH_CLOSE,kernel_close, cv::Point(-1,-1),  2);
+        cv::morphologyEx(rightMaskRed, rightMaskRed, cv::MORPH_OPEN,kernel_open, cv::Point(-1,-1),  2);
+        cv::morphologyEx(rightMaskRed, rightMaskRed, cv::MORPH_CLOSE,kernel_close, cv::Point(-1,-1),  2);
+        
+
         // left color mask 
         cv::Mat leftMaskRed, leftMaskGreen;
         cv::inRange(leftZone_hsv, red_hsv_low_threshold, red_hsv_max_range_threshold, leftMaskGreen);
         cv::inRange(leftZone_hsv, red_hsv_zero_threshold, red_hsv_high_threshold, leftMaskRed);
         leftMaskRed |= leftMaskGreen;
         cv::inRange(leftZone_hsv, green_hsv_low_threshold, green_hsv_high_threshold, leftMaskGreen);
+
+        // Do an open/close on the left color mask to remove noise
+        cv::morphologyEx(leftMaskGreen, leftMaskGreen, cv::MORPH_OPEN,kernel_open, cv::Point(-1,-1),  2);
+        cv::morphologyEx(leftMaskGreen, leftMaskGreen, cv::MORPH_CLOSE,kernel_close, cv::Point(-1,-1),  2);
+        cv::morphologyEx(leftMaskRed, leftMaskRed, cv::MORPH_OPEN,kernel_open, cv::Point(-1,-1),  2);
+        cv::morphologyEx(leftMaskRed, leftMaskRed, cv::MORPH_CLOSE,kernel_close, cv::Point(-1,-1),  2);
+
 
         // center color mask 
         cv::Mat centerMaskRed, centerMaskGreen;
@@ -216,16 +217,40 @@ int main ( int argc,char **argv )
         /*
          * Center zone 
          */
-        centerZoneDetection(centerMaskGreen, centerZone, cv::Scalar(168, 255, 0) );
-        centerZoneDetection(centerMaskRed, centerZone, cv::Scalar(0, 162, 255) );
+        vector<cv::Point> redCupList, greenCupList;
+        // centerZoneDetection(centerMaskGreen, centerZone, cv::Scalar(168, 255, 0), greenCupList );
+        centerZoneDetection(centerMaskRed, centerZone, cv::Scalar(0, 162, 255), redCupList );
+
        
         // Various display
-        cv::rectangle( photo_undistorted, cropZoneLeft.tl(), cropZoneLeft.br(), ColorWhite, 1);
+        cv::rectangle( photo_undistorted, cropCenterZone.tl(), cropCenterZone.br(), ColorWhite, 1);
         cv::rectangle( photo_undistorted, cropZoneRight.tl(), cropZoneRight.br(), ColorWhite, 1);
+        cv::rectangle( photo_undistorted, cropZoneLeft.tl(), cropZoneLeft.br(), ColorWhite, 1);
+        cv::rectangle( photo_undistorted, gagZone.tl(), gagZone.br(), ColorWhite, 1);
+        cv::rectangle( photo_undistorted, gagZone2.tl(), gagZone2.br(), ColorWhite, 1);
 
+
+        cv::Rect2d preciseRightBoundRec(rightBoundRect.x + cropZoneRight.x , rightBoundRect.y + cropZoneRight.y , rightBoundRect.width, rightBoundRect.height);
+        cv::rectangle( photo_undistorted, preciseRightBoundRec.tl(), preciseRightBoundRec.br(), ColorWhite, 1);
+
+        cv::Rect2d preciseLeftBoundRec(leftBoundRect.x + cropZoneLeft.x , leftBoundRect.y + cropZoneLeft.y , leftBoundRect.width, leftBoundRect.height);
+        cv::rectangle( photo_undistorted, preciseLeftBoundRec.tl(), preciseLeftBoundRec.br(), ColorWhite, 1);
+
+
+        for(int cup=0; cup < redCupList.size(); cup++)
+        {
+            cv::Point pointInImage(redCupList[cup].x + cropCenterZone.x, redCupList[cup].y + cropCenterZone.y );
+            cv::Point pointOnTable = positionOnTableFromPointInImage(pointInImage, K, rotationMatrix, position_detection_tvec);
+            cout << "image " << pointInImage << " <=> table " << pointOnTable << endl;
+        }
         cout<< "compute duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
       
-        cv::imshow( "photo_undistorted", photo_undistorted );
+        cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        cv::imshow( "photo_undistorted", photo_undistorted );         
+        cv::namedWindow("centerMaskRed",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        cv::imshow( "centerMaskRed", centerMaskRed );     
+        
+
         cv::waitKey(0);
     }
 
