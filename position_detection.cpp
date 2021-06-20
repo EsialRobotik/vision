@@ -11,6 +11,7 @@
 #include <assert.h>
 #include <cmath>
 #include <vector>
+#include <algorithm>
 
 using namespace std; 
 
@@ -39,9 +40,16 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
 
     // if at least one marker detected
     if (markerIds.size() > 0)
-        cv::aruco::drawDetectedMarkers(photo_undistorted, markerCorners, markerIds);
+    {
+#if 0
+       cv::aruco::drawDetectedMarkers(photo_undistorted, markerCorners, markerIds);
+#endif
+    }
     else
+    {
         return false;
+    }
+
 
    // Position of the corner of the aruco tag on the eurobot table
     vector<cv::Point3f> objectPosition;
@@ -67,17 +75,36 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
         else if( markerIds[marker_id] == 69)
         {
             cout << "Aruco 69 detected " << endl;
-            objectPosition.push_back(cv::Point3f(19.0, 1464.0, 0.0));
+
+            objectPosition.push_back(cv::Point3f(273.0, 834.0-18.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][0]);
             
-            objectPosition.push_back(cv::Point3f(200.0, 1464.0, 0.0));
+            objectPosition.push_back(cv::Point3f(273.0, 834.0-201.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][1]);
 
-            objectPosition.push_back(cv::Point3f(200.0, 1283.0, 0.0));
+            objectPosition.push_back(cv::Point3f(91.0, 834.0-201.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][2]);
 
-            objectPosition.push_back(cv::Point3f(19.0, 1283.0, 0.0));
+            objectPosition.push_back(cv::Point3f(91.0, 834.0-18.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][3]);
+
+        }
+        else if (markerIds[marker_id] == 51 )
+        {
+            cout << "Aruco 51 detected " << endl;
+
+            objectPosition.push_back(cv::Point3f(18.0, 1462.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][0]);
+            
+            objectPosition.push_back(cv::Point3f(200.0, 1462.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][1]);
+
+            objectPosition.push_back(cv::Point3f(200.0, 1280.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][2]);
+
+            objectPosition.push_back(cv::Point3f(18.0, 1280.0, 0.0));
+            objetImagePosition.push_back(markerCorners[marker_id][3]);
+
         }
     }
 
@@ -92,7 +119,7 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
     cv::Mat emptyDist;
     if( objectPosition.size() > 0)
     {
-        bool res =  cv::solvePnP(objectPosition, objetImagePosition, K, emptyDist, rvec, tvec, false, cv::SOLVEPNP_IPPE);
+        bool res =  cv::solvePnP(objectPosition, objetImagePosition, K, emptyDist, rvec, tvec, false);
         if(res)
              cv::Rodrigues(rvec,rotationMatrix);
          return res;
@@ -118,3 +145,27 @@ cv::Rect2d localizeZone(cv::Mat const &K, cv::Mat const &D, cv::Mat const &rvec,
   
     return cv::Rect2d(imagePoint[0].x, imagePoint[0].y, imagePoint[1].x-imagePoint[0].x, imagePoint[1].y-imagePoint[0].y);
 }
+
+
+t_trapezium localizeTrapezium(cv::Mat const &K, cv::Mat const &D, cv::Mat const &rvec, cv::Mat const &tvec, t_trapezium & trapezium_in_table, int up_offset )
+{
+    vector<cv::Point3f> objectPoint;
+    objectPoint.push_back(cv::Point3f(trapezium_in_table.top_left.x, trapezium_in_table.top_left.y, up_offset));
+    objectPoint.push_back(cv::Point3f(trapezium_in_table.top_right.x, trapezium_in_table.top_right.y, up_offset));
+    objectPoint.push_back(cv::Point3f(trapezium_in_table.bottom_right.x, trapezium_in_table.bottom_right.y, up_offset));
+    objectPoint.push_back(cv::Point3f(trapezium_in_table.bottom_left.x, trapezium_in_table.bottom_left.y, up_offset));
+
+    vector<cv::Point2f> imagePoint;
+    cv::Mat emptyDist;
+
+    cv::projectPoints(objectPoint, rvec, tvec, K, emptyDist, imagePoint);
+
+    t_trapezium trapezium_in_image;
+    trapezium_in_image.top_left = cv::Point(imagePoint[0].x, imagePoint[0].y);
+    trapezium_in_image.top_right = cv::Point(imagePoint[1].x, imagePoint[1].y);
+    trapezium_in_image.bottom_right = cv::Point(imagePoint[2].x, imagePoint[2].y);
+    trapezium_in_image.bottom_left = cv::Point(imagePoint[3].x, imagePoint[3].y);
+
+    return trapezium_in_image;
+}
+

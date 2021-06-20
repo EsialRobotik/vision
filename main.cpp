@@ -8,6 +8,7 @@
 #include <opencv2/aruco.hpp>
 #include <unistd.h>
 #include <cstdint>
+#include <vector>
 #include <cmath> 
 #include <assert.h>
 #include <libconfig.h++>
@@ -15,6 +16,9 @@
 #include "dock_zone_detection.hpp"
 #include "center_zone_detection.hpp"
 #include "position_detection.hpp"
+
+void extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezium rightZoneTrapeziumInImage, cv::Mat &extract);
+void drawTrapezium(cv::Mat &photo_undistorted, t_trapezium &rightZoneTrapeziumInImage);
 
 using namespace std; 
 
@@ -95,8 +99,6 @@ int main ( int argc,char **argv )
     cv::Rect2d cropZoneLeft;
     cv::Rect2d cropZoneRight;
     cv::Rect2d cropCenterZone;
-    cv::Rect2d gagZone;
-    cv::Rect2d gagZone2;
 
 
     time_t timer_begin,timer_end;
@@ -112,32 +114,56 @@ int main ( int argc,char **argv )
     }
    
     cout<<"Warm up... "<<endl; 
-    sleep(3);    
+    //sleep(3);    
     cout<<"Capturing " <<endl;
 
 
-    Camera.grab();
-    Camera.retrieve ( photo);
+    //Camera.grab();
+    //Camera.retrieve ( photo);
+    photo = cv::imread("29_blurred.jpg");
+
     cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+
+    t_trapezium centerZoneTrapeziumInImage;
+    t_trapezium rightZoneTrapeziumInImage;
+    t_trapezium leftZoneTrapeziumInImage;
 
     bool position_detection_ok = detectArucoAndComputeRotVecMatrixes(photo_undistorted, K, D, position_detection_rvec, position_detection_tvec, rotationMatrix);
     if( position_detection_ok)
     {
-        cropZoneRight  = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 0.0, 1059.0, -134.0, 640.0);
-        cropZoneLeft   = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 0.0, 2359.0, -134.0, 1940.0);
-        cropCenterZone = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 500.0, 2000.0, 0.0, 1000.0);
+        const int y_offset_same_side = 70;
+        const int y_offset_other_side = 170; // Todo : determine current side to adjust this !
+        const int x_offset = 20;
 
-        gagZone = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 100.0, 100.0, 0.0, 0.0);
-        gagZone2 = localizeZone(K, D,position_detection_rvec, position_detection_tvec, 1200.0, 3000.0, 1000.0, 0.0);
+        t_trapezium right_trapezium_in_table;
+        right_trapezium_in_table.top_left = cv::Point(-22, 1059);
+        right_trapezium_in_table.top_right = cv::Point(-22, 640);
+        right_trapezium_in_table.bottom_right = cv::Point(-114, 640);
+        right_trapezium_in_table.bottom_left = cv::Point(-114, 1059);
+        rightZoneTrapeziumInImage = localizeTrapezium(K, D,position_detection_rvec, position_detection_tvec, right_trapezium_in_table, 115);
 
+
+        t_trapezium left_trapezium_in_table;
+        left_trapezium_in_table.top_left = cv::Point(-22, 2359);
+        left_trapezium_in_table.top_right = cv::Point(-22, 1940);
+        left_trapezium_in_table.bottom_right = cv::Point(-114, 1940);
+        left_trapezium_in_table.bottom_left = cv::Point(-114, 2359);
+        leftZoneTrapeziumInImage = localizeTrapezium(K, D,position_detection_rvec, position_detection_tvec, left_trapezium_in_table, 115);
+
+        t_trapezium center_trapezium_in_table;
+        center_trapezium_in_table.top_left = cv::Point(500,2000);
+        center_trapezium_in_table.top_right = cv::Point(500,1000);
+		center_trapezium_in_table.bottom_right = cv::Point(0,1000);
+		center_trapezium_in_table.bottom_left = cv::Point(0,2000);
+		centerZoneTrapeziumInImage = localizeTrapezium(K, D,position_detection_rvec, position_detection_tvec, center_trapezium_in_table);
     }
 
 
     while(1)
     {
         clock_t start = clock();
-        Camera.grab();
-        Camera.retrieve ( photo);
+        // Camera.grab();
+        // Camera.retrieve ( photo);
         cout<< "capture duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
 
 
@@ -146,12 +172,17 @@ int main ( int argc,char **argv )
         cout<< "fisheye compensation duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
         start = clock(); 
 
+
         // Extract right/left zone 
-        cv::Mat rightZone = photo_undistorted(cropZoneRight);
-        cv::Mat leftZone = photo_undistorted(cropZoneLeft);
+        cv::Mat rightZone, leftZone;
+        extractTrapeziumZoneFromPointsInImage(photo_undistorted, rightZoneTrapeziumInImage, rightZone  );
+        extractTrapeziumZoneFromPointsInImage(photo_undistorted, leftZoneTrapeziumInImage, leftZone  );
+
+
 
         // extract center zone
-        cv::Mat centerZone = photo_undistorted(cropCenterZone);
+        cv::Mat centerZone;
+        extractTrapeziumZoneFromPointsInImage(photo_undistorted, centerZoneTrapeziumInImage, centerZone  );
         
         // Transform to HSV
         cv::Mat rightZone_hsv;
@@ -223,32 +254,29 @@ int main ( int argc,char **argv )
 
        
         // Various display
-        cv::rectangle( photo_undistorted, cropCenterZone.tl(), cropCenterZone.br(), ColorWhite, 1);
-        cv::rectangle( photo_undistorted, cropZoneRight.tl(), cropZoneRight.br(), ColorWhite, 1);
-        cv::rectangle( photo_undistorted, cropZoneLeft.tl(), cropZoneLeft.br(), ColorWhite, 1);
-        cv::rectangle( photo_undistorted, gagZone.tl(), gagZone.br(), ColorWhite, 1);
-        cv::rectangle( photo_undistorted, gagZone2.tl(), gagZone2.br(), ColorWhite, 1);
+        drawTrapezium(photo_undistorted, centerZoneTrapeziumInImage);
+        drawTrapezium(photo_undistorted, rightZoneTrapeziumInImage);
+        drawTrapezium(photo_undistorted, leftZoneTrapeziumInImage);
 
-
-        cv::Rect2d preciseRightBoundRec(rightBoundRect.x + cropZoneRight.x , rightBoundRect.y + cropZoneRight.y , rightBoundRect.width, rightBoundRect.height);
-        cv::rectangle( photo_undistorted, preciseRightBoundRec.tl(), preciseRightBoundRec.br(), ColorWhite, 1);
-
-        cv::Rect2d preciseLeftBoundRec(leftBoundRect.x + cropZoneLeft.x , leftBoundRect.y + cropZoneLeft.y , leftBoundRect.width, leftBoundRect.height);
-        cv::rectangle( photo_undistorted, preciseLeftBoundRec.tl(), preciseLeftBoundRec.br(), ColorWhite, 1);
+//        cv::Rect2d preciseRightBoundRec(rightBoundRect.x + cropZoneRight.x , rightBoundRect.y + cropZoneRight.y , rightBoundRect.width, rightBoundRect.height);
+//        cv::rectangle( photo_undistorted, preciseRightBoundRec.tl(), preciseRightBoundRec.br(), ColorWhite, 1);
+//
+//        cv::Rect2d preciseLeftBoundRec(leftBoundRect.x + cropZoneLeft.x , leftBoundRect.y + cropZoneLeft.y , leftBoundRect.width, leftBoundRect.height);
+//        cv::rectangle( photo_undistorted, preciseLeftBoundRec.tl(), preciseLeftBoundRec.br(), ColorWhite, 1);
 
 
         for(int cup=0; cup < redCupList.size(); cup++)
         {
-            cv::Point pointInImage(redCupList[cup].x + cropCenterZone.x, redCupList[cup].y + cropCenterZone.y );
-            cv::Point pointOnTable = positionOnTableFromPointInImage(pointInImage, K, rotationMatrix, position_detection_tvec);
-            cout << "image " << pointInImage << " <=> table " << pointOnTable << endl;
+//            cv::Point pointInImage(redCupList[cup].x + cropCenterZone.x, redCupList[cup].y + cropCenterZone.y );
+//            cv::Point pointOnTable = positionOnTableFromPointInImage(pointInImage, K, rotationMatrix, position_detection_tvec);
+//            cout << "image " << pointInImage << " <=> table " << pointOnTable << endl;
         }
         cout<< "compute duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
       
         cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
         cv::imshow( "photo_undistorted", photo_undistorted );         
-        cv::namedWindow("centerMaskRed",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
-        cv::imshow( "centerMaskRed", centerMaskRed );     
+        //cv::namedWindow("centerMaskRed",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        //cv::imshow( "centerMaskRed", centerMaskRed );     
         
 
         cv::waitKey(0);
@@ -261,4 +289,46 @@ int main ( int argc,char **argv )
 }
 
 
+void extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezium rightZoneTrapeziumInImage, cv::Mat &extract  )
+{
+	int minX = std::min(rightZoneTrapeziumInImage.top_left.x, rightZoneTrapeziumInImage.bottom_left.x);
+	int minY = std::min(rightZoneTrapeziumInImage.top_left.y, rightZoneTrapeziumInImage.top_right.y);
+	int maxX = std::max(rightZoneTrapeziumInImage.top_right.x, rightZoneTrapeziumInImage.bottom_right.x);
+	int maxY = std::max(rightZoneTrapeziumInImage.bottom_right.y, rightZoneTrapeziumInImage.bottom_left.y);
 
+	cv::Rect2d roi(minX, minY, maxX-minX, maxY-minY);
+	cv::Mat cropedZone = photo_undistorted(roi);
+
+	rightZoneTrapeziumInImage.top_left.x     -= minX;
+	rightZoneTrapeziumInImage.top_right.x    -= minX;
+	rightZoneTrapeziumInImage.bottom_right.x -= minX;
+	rightZoneTrapeziumInImage.bottom_left.x  -= minX;
+	rightZoneTrapeziumInImage.top_left.y     -= minY;
+	rightZoneTrapeziumInImage.top_right.y    -= minY;
+	rightZoneTrapeziumInImage.bottom_right.y -= minY;
+	rightZoneTrapeziumInImage.bottom_left.y  -= minY;
+
+
+    cv::Mat mask (cropedZone.rows, cropedZone.cols, CV_8UC1, cv::Scalar(0));
+    vector< vector<cv::Point> >  co_ordinates;
+    co_ordinates.push_back(vector<cv::Point>());
+    co_ordinates[0].push_back(rightZoneTrapeziumInImage.top_left);
+    co_ordinates[0].push_back(rightZoneTrapeziumInImage.top_right);
+    co_ordinates[0].push_back(rightZoneTrapeziumInImage.bottom_right);
+    co_ordinates[0].push_back(rightZoneTrapeziumInImage.bottom_left);
+    drawContours( mask,co_ordinates,0, cv::Scalar(255),-1, 8 );
+
+    cropedZone.copyTo(extract, mask);
+}
+
+
+void drawTrapezium(cv::Mat &photo_undistorted, t_trapezium &rightZoneTrapeziumInImage)
+{
+	vector< vector<cv::Point> >  co_ordinates;
+	co_ordinates.push_back(vector<cv::Point>());
+	co_ordinates[0].push_back(rightZoneTrapeziumInImage.top_left);
+	co_ordinates[0].push_back(rightZoneTrapeziumInImage.top_right);
+	co_ordinates[0].push_back(rightZoneTrapeziumInImage.bottom_right);
+	co_ordinates[0].push_back(rightZoneTrapeziumInImage.bottom_left);
+	drawContours( photo_undistorted,co_ordinates,0, ColorWhite);
+}
