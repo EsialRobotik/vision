@@ -12,9 +12,16 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <pigpiod_if2.h>
+
 
 using namespace std; 
 
+
+extern int pigpioID;
+extern int GPIO_aruco_42;
+extern int GPIO_aruco_51;
+extern int GPIO_aruco_69;
 
 cv::Point positionOnTableFromPointInImage(cv::Point &pointInImage, cv::Mat &cameraMatrix, cv::Mat &rotationMatrix, cv::Mat &tvec)
 {
@@ -38,6 +45,12 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
     cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_250);
     cv::aruco::detectMarkers(photo_undistorted, dictionary, markerCorners, markerIds, parameters, rejectedCandidates, K, D);
 
+
+    // Reset display
+    gpio_write(pigpioID, GPIO_aruco_42, 0);
+    gpio_write(pigpioID, GPIO_aruco_51, 0);
+    gpio_write(pigpioID, GPIO_aruco_69, 0);
+
     // if at least one marker detected
     if (markerIds.size() > 0)
     {
@@ -60,6 +73,8 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
         if( markerIds[marker_id] == 42)
         {
             cout << "Aruco 42 detected " << endl;
+            gpio_write(pigpioID, GPIO_aruco_42, 1);
+
             objectPosition.push_back(cv::Point3f(1200.0, 1450.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][0]);
             
@@ -75,6 +90,7 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
         else if( markerIds[marker_id] == 69)
         {
             cout << "Aruco 69 detected " << endl;
+            gpio_write(pigpioID, GPIO_aruco_69, 1);
 
             objectPosition.push_back(cv::Point3f(273.0, 834.0-18.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][0]);
@@ -92,6 +108,7 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
         else if (markerIds[marker_id] == 51 )
         {
             cout << "Aruco 51 detected " << endl;
+            gpio_write(pigpioID, GPIO_aruco_51, 1);
 
             objectPosition.push_back(cv::Point3f(18.0, 1462.0, 0.0));
             objetImagePosition.push_back(markerCorners[marker_id][0]);
@@ -119,7 +136,7 @@ bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::M
     cv::Mat emptyDist;
     if( objectPosition.size() > 0)
     {
-        bool res =  cv::solvePnP(objectPosition, objetImagePosition, K, emptyDist, rvec, tvec, false);
+        bool res = cv::solvePnP(objectPosition, objetImagePosition, K, emptyDist, rvec, tvec, false);
         if(res)
              cv::Rodrigues(rvec,rotationMatrix);
          return res;

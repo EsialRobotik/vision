@@ -11,14 +11,33 @@
 #include <vector>
 #include <cmath> 
 #include <assert.h>
+#include <thread>
 #include <libconfig.h++>
+#include <pigpiod_if2.h>
 #include "predefined_colors.hpp"
 #include "dock_zone_detection.hpp"
 #include "center_zone_detection.hpp"
 #include "position_detection.hpp"
+#include "unistd.h"
 
 void extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezium rightZoneTrapeziumInImage, cv::Mat &extract);
 void drawTrapezium(cv::Mat &photo_undistorted, t_trapezium &rightZoneTrapeziumInImage);
+bool keep_alive_running=true;
+void keep_alive(int pigpioID);
+bool is_capturing = false;
+void capturing(int pigpioID);
+
+
+bool accept_calibration = false;
+void accept_calibration_btn_watch(int pigpioID);
+
+bool do_reset = false;
+void do_reset_btn_watch(int pigpioID);
+
+int pigpioID;
+int GPIO_aruco_42 = 12;
+int GPIO_aruco_51 = 16;
+int GPIO_aruco_69 = 19;
 
 using namespace std; 
 
@@ -46,6 +65,27 @@ void generateFisheyeUndistordMap(cv::Mat &map1, cv::Mat &map2)
 
 int main ( int argc,char **argv ) 
 {
+    pigpioID = pigpio_start(0, 0);
+    if ( pigpioID < 0)
+    {
+        cerr<<"Unable to start pigpio "<<endl;
+        return -1;
+    }
+    std::thread keep_alive_thread(keep_alive, pigpioID);
+    std::thread capturing_thread(capturing, pigpioID);
+    std::thread accept_calibration_btn_thread(accept_calibration_btn_watch, pigpioID);
+    std::thread do_reset_btn_thread(do_reset_btn_watch, pigpioID);
+
+    set_mode(pigpioID, GPIO_aruco_42, PI_OUTPUT);
+    set_mode(pigpioID, GPIO_aruco_51, PI_OUTPUT);
+    set_mode(pigpioID, GPIO_aruco_69, PI_OUTPUT);
+
+
+        
+
+    
+
+
     generateFisheyeUndistordMap( fisheye_map1, fisheye_map2);
     if( fisheye_map1.size().width == 0 || fisheye_map1.size().height == 0
         || fisheye_map2.size().width == 0 || fisheye_map2.size().height == 0)
@@ -118,47 +158,58 @@ int main ( int argc,char **argv )
     cout<<"Capturing " <<endl;
 
 
-    //Camera.grab();
-    //Camera.retrieve ( photo);
-    photo = cv::imread("29_blurred.jpg");
-
-    cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
-
     t_trapezium centerZoneTrapeziumInImage;
     t_trapezium rightZoneTrapeziumInImage;
     t_trapezium leftZoneTrapeziumInImage;
 
-    bool position_detection_ok = detectArucoAndComputeRotVecMatrixes(photo_undistorted, K, D, position_detection_rvec, position_detection_tvec, rotationMatrix);
-    if( position_detection_ok)
+reset_GOTO:
+    do_reset = false;
+    accept_calibration = false;
+    is_capturing = false;
+    bool position_detection_ok = false;
+    while( !accept_calibration || !position_detection_ok)
     {
-        const int y_offset_same_side = 70;
-        const int y_offset_other_side = 170; // Todo : determine current side to adjust this !
-        const int x_offset = 20;
 
-        t_trapezium right_trapezium_in_table;
-        right_trapezium_in_table.top_left = cv::Point(-22, 1059);
-        right_trapezium_in_table.top_right = cv::Point(-22, 640);
-        right_trapezium_in_table.bottom_right = cv::Point(-114, 640);
-        right_trapezium_in_table.bottom_left = cv::Point(-114, 1059);
-        rightZoneTrapeziumInImage = localizeTrapezium(K, D,position_detection_rvec, position_detection_tvec, right_trapezium_in_table, 115);
+        //Camera.grab();
+        //Camera.retrieve ( photo);
+        photo = cv::imread("29_blurred.jpg");
 
 
-        t_trapezium left_trapezium_in_table;
-        left_trapezium_in_table.top_left = cv::Point(-22, 2359);
-        left_trapezium_in_table.top_right = cv::Point(-22, 1940);
-        left_trapezium_in_table.bottom_right = cv::Point(-114, 1940);
-        left_trapezium_in_table.bottom_left = cv::Point(-114, 2359);
-        leftZoneTrapeziumInImage = localizeTrapezium(K, D,position_detection_rvec, position_detection_tvec, left_trapezium_in_table, 115);
+        cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
 
-        t_trapezium center_trapezium_in_table;
-        center_trapezium_in_table.top_left = cv::Point(500,2000);
-        center_trapezium_in_table.top_right = cv::Point(500,1000);
-		center_trapezium_in_table.bottom_right = cv::Point(0,1000);
-		center_trapezium_in_table.bottom_left = cv::Point(0,2000);
-		centerZoneTrapeziumInImage = localizeTrapezium(K, D,position_detection_rvec, position_detection_tvec, center_trapezium_in_table);
+
+        position_detection_ok = detectArucoAndComputeRotVecMatrixes(photo_undistorted, K, D, position_detection_rvec, position_detection_tvec, rotationMatrix);
+        if( position_detection_ok)
+        {
+            t_trapezium right_trapezium_in_table;
+            right_trapezium_in_table.top_left = cv::Point(-22, 1059);
+            right_trapezium_in_table.top_right = cv::Point(-22, 640);
+            right_trapezium_in_table.bottom_right = cv::Point(-114, 640);
+            right_trapezium_in_table.bottom_left = cv::Point(-114, 1059);
+            rightZoneTrapeziumInImage = localizeTrapezium(K, D,position_detection_rvec, position_detection_tvec, right_trapezium_in_table, 115);
+
+
+            t_trapezium left_trapezium_in_table;
+            left_trapezium_in_table.top_left = cv::Point(-22, 2359);
+            left_trapezium_in_table.top_right = cv::Point(-22, 1940);
+            left_trapezium_in_table.bottom_right = cv::Point(-114, 1940);
+            left_trapezium_in_table.bottom_left = cv::Point(-114, 2359);
+            leftZoneTrapeziumInImage = localizeTrapezium(K, D,position_detection_rvec, position_detection_tvec, left_trapezium_in_table, 115);
+
+            t_trapezium center_trapezium_in_table;
+            center_trapezium_in_table.top_left = cv::Point(500,2000);
+            center_trapezium_in_table.top_right = cv::Point(500,1000);
+            center_trapezium_in_table.bottom_right = cv::Point(0,1000);
+            center_trapezium_in_table.bottom_left = cv::Point(0,2000);
+            centerZoneTrapeziumInImage = localizeTrapezium(K, D,position_detection_rvec, position_detection_tvec, center_trapezium_in_table);
+        }
+
+        if(do_reset)
+            goto reset_GOTO;
+
     }
 
-
+    is_capturing = true;
     while(1)
     {
         clock_t start = clock();
@@ -273,40 +324,45 @@ int main ( int argc,char **argv )
         }
         cout<< "compute duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
       
-        cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
-        cv::imshow( "photo_undistorted", photo_undistorted );         
+        //cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        //cv::imshow( "photo_undistorted", photo_undistorted );         
         //cv::namedWindow("centerMaskRed",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
         //cv::imshow( "centerMaskRed", centerMaskRed );     
-        
+        //cv::waitKey(0);
 
-        cv::waitKey(0);
+        if(do_reset)
+            goto reset_GOTO;
     }
 
     cout<<"Stop camera..."<<endl;
     Camera.release();
-   
+    keep_alive_running = false;
+    keep_alive_thread.join();
+
+    pigpio_stop(pigpioID);
+
  return 0;
 }
 
 
 void extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezium rightZoneTrapeziumInImage, cv::Mat &extract  )
 {
-	int minX = std::min(rightZoneTrapeziumInImage.top_left.x, rightZoneTrapeziumInImage.bottom_left.x);
-	int minY = std::min(rightZoneTrapeziumInImage.top_left.y, rightZoneTrapeziumInImage.top_right.y);
-	int maxX = std::max(rightZoneTrapeziumInImage.top_right.x, rightZoneTrapeziumInImage.bottom_right.x);
-	int maxY = std::max(rightZoneTrapeziumInImage.bottom_right.y, rightZoneTrapeziumInImage.bottom_left.y);
+    int minX = std::min(rightZoneTrapeziumInImage.top_left.x, rightZoneTrapeziumInImage.bottom_left.x);
+    int minY = std::min(rightZoneTrapeziumInImage.top_left.y, rightZoneTrapeziumInImage.top_right.y);
+    int maxX = std::max(rightZoneTrapeziumInImage.top_right.x, rightZoneTrapeziumInImage.bottom_right.x);
+    int maxY = std::max(rightZoneTrapeziumInImage.bottom_right.y, rightZoneTrapeziumInImage.bottom_left.y);
 
-	cv::Rect2d roi(minX, minY, maxX-minX, maxY-minY);
-	cv::Mat cropedZone = photo_undistorted(roi);
+    cv::Rect2d roi(minX, minY, maxX-minX, maxY-minY);
+    cv::Mat cropedZone = photo_undistorted(roi);
 
-	rightZoneTrapeziumInImage.top_left.x     -= minX;
-	rightZoneTrapeziumInImage.top_right.x    -= minX;
-	rightZoneTrapeziumInImage.bottom_right.x -= minX;
-	rightZoneTrapeziumInImage.bottom_left.x  -= minX;
-	rightZoneTrapeziumInImage.top_left.y     -= minY;
-	rightZoneTrapeziumInImage.top_right.y    -= minY;
-	rightZoneTrapeziumInImage.bottom_right.y -= minY;
-	rightZoneTrapeziumInImage.bottom_left.y  -= minY;
+    rightZoneTrapeziumInImage.top_left.x     -= minX;
+    rightZoneTrapeziumInImage.top_right.x    -= minX;
+    rightZoneTrapeziumInImage.bottom_right.x -= minX;
+    rightZoneTrapeziumInImage.bottom_left.x  -= minX;
+    rightZoneTrapeziumInImage.top_left.y     -= minY;
+    rightZoneTrapeziumInImage.top_right.y    -= minY;
+    rightZoneTrapeziumInImage.bottom_right.y -= minY;
+    rightZoneTrapeziumInImage.bottom_left.y  -= minY;
 
 
     cv::Mat mask (cropedZone.rows, cropedZone.cols, CV_8UC1, cv::Scalar(0));
@@ -324,11 +380,79 @@ void extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezi
 
 void drawTrapezium(cv::Mat &photo_undistorted, t_trapezium &rightZoneTrapeziumInImage)
 {
-	vector< vector<cv::Point> >  co_ordinates;
-	co_ordinates.push_back(vector<cv::Point>());
-	co_ordinates[0].push_back(rightZoneTrapeziumInImage.top_left);
-	co_ordinates[0].push_back(rightZoneTrapeziumInImage.top_right);
-	co_ordinates[0].push_back(rightZoneTrapeziumInImage.bottom_right);
-	co_ordinates[0].push_back(rightZoneTrapeziumInImage.bottom_left);
-	drawContours( photo_undistorted,co_ordinates,0, ColorWhite);
+    vector< vector<cv::Point> >  co_ordinates;
+    co_ordinates.push_back(vector<cv::Point>());
+    co_ordinates[0].push_back(rightZoneTrapeziumInImage.top_left);
+    co_ordinates[0].push_back(rightZoneTrapeziumInImage.top_right);
+    co_ordinates[0].push_back(rightZoneTrapeziumInImage.bottom_right);
+    co_ordinates[0].push_back(rightZoneTrapeziumInImage.bottom_left);
+    drawContours( photo_undistorted,co_ordinates,0, ColorWhite);
+}
+
+void keep_alive(int pigpioID)
+{
+    const int gpio_num = 15;
+    set_mode(pigpioID, gpio_num, PI_OUTPUT);
+
+    while(keep_alive_running)
+    {
+
+        usleep(1000*200);
+        gpio_write(pigpioID, gpio_num, 1);
+        usleep(1000*200);
+        gpio_write(pigpioID, gpio_num, 0);
+    }
+}
+
+void capturing(int pigpioID)
+{
+    const int gpio_num = 6;
+    set_mode(pigpioID, gpio_num, PI_OUTPUT);
+    while(keep_alive_running)
+    {
+        if( !is_capturing )
+        {
+            usleep(1000*200);
+            gpio_write(pigpioID, gpio_num, is_capturing);
+        }
+        else
+        {
+            usleep(1000*200);
+            gpio_write(pigpioID, gpio_num, 1);
+            usleep(1000*200);
+            gpio_write(pigpioID, gpio_num, 0);
+        }
+        
+    }
+}
+
+void accept_calibration_btn_watch(int pigpioID)
+{
+    const int gpio_num = 10;
+    set_mode(pigpioID, gpio_num, PI_INPUT);
+    set_pull_up_down(pigpioID, gpio_num, PI_PUD_UP);
+    
+
+    while(1)
+    {
+        wait_for_edge(pigpioID, gpio_num, FALLING_EDGE, 86400);
+        cout << " Accept calibration" << endl;
+        accept_calibration = true;
+        usleep(1000*500);
+    }
+}
+
+void do_reset_btn_watch(int pigpioID)
+{
+    const int gpio_num = 11;
+    set_mode(pigpioID, gpio_num, PI_INPUT);
+    set_pull_up_down(pigpioID, gpio_num, PI_PUD_UP);
+    
+    while(1)
+    {
+        wait_for_edge(pigpioID, gpio_num, FALLING_EDGE, 86400);    
+        do_reset = true;
+            cout<<"RESET"<<endl; 
+        usleep(1000*500);
+    }
 }
