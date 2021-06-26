@@ -89,4 +89,14 @@ void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, 
 
         cv::rectangle( zone, tl, br, Colorblack);
     }
+
+#if 0
+        cv::namedWindow("zone",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        cv::imshow( "zone", zone );
+        cv::namedWindow("greenMask",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        cv::imshow( "greenMask", greenMask );
+        cv::namedWindow("redMask",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        cv::imshow( "redMask", redMask );         
+        cv::waitKey(0);
+#endif
 }

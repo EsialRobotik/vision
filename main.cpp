@@ -20,7 +20,7 @@
 #include "position_detection.hpp"
 #include "unistd.h"
 
-void extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezium rightZoneTrapeziumInImage, cv::Mat &extract);
+cv::Rect2d extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezium rightZoneTrapeziumInImage, cv::Mat &extract);
 void drawTrapezium(cv::Mat &photo_undistorted, t_trapezium &rightZoneTrapeziumInImage);
 bool keep_alive_running=true;
 void keep_alive(int pigpioID);
@@ -80,12 +80,9 @@ int main ( int argc,char **argv )
     set_mode(pigpioID, GPIO_aruco_51, PI_OUTPUT);
     set_mode(pigpioID, GPIO_aruco_69, PI_OUTPUT);
 
-
-        
-
-    
-
-
+    /*
+     * Retrieve fishey calibration from Camera & distortion matrix in configuration file.
+     */ 
     generateFisheyeUndistordMap( fisheye_map1, fisheye_map2);
     if( fisheye_map1.size().width == 0 || fisheye_map1.size().height == 0
         || fisheye_map2.size().width == 0 || fisheye_map2.size().height == 0)
@@ -135,12 +132,6 @@ int main ( int argc,char **argv )
     cv::Scalar red_hsv_high_threshold(hue_max, saturation_max, value_max);
 
 
-    // ROI zones will be computed in position_detection
-    cv::Rect2d cropZoneLeft;
-    cv::Rect2d cropZoneRight;
-    cv::Rect2d cropCenterZone;
-
-
     time_t timer_begin,timer_end;
     raspicam::RaspiCam_Still_Cv Camera;
     cv::Mat photo, photo_undistorted;
@@ -154,7 +145,7 @@ int main ( int argc,char **argv )
     }
    
     cout<<"Warm up... "<<endl; 
-    //sleep(3);    
+    sleep(3);    
     cout<<"Capturing " <<endl;
 
 
@@ -233,7 +224,7 @@ reset_GOTO:
 
         // extract center zone
         cv::Mat centerZone;
-        extractTrapeziumZoneFromPointsInImage(photo_undistorted, centerZoneTrapeziumInImage, centerZone  );
+        cv::Rect2d centerZoneRoi = extractTrapeziumZoneFromPointsInImage(photo_undistorted, centerZoneTrapeziumInImage, centerZone  );
         
         // Transform to HSV
         cv::Mat rightZone_hsv;
@@ -300,7 +291,7 @@ reset_GOTO:
          * Center zone 
          */
         vector<cv::Point> redCupList, greenCupList;
-        // centerZoneDetection(centerMaskGreen, centerZone, cv::Scalar(168, 255, 0), greenCupList );
+        centerZoneDetection(centerMaskGreen, centerZone, cv::Scalar(168, 255, 0), greenCupList );
         centerZoneDetection(centerMaskRed, centerZone, cv::Scalar(0, 162, 255), redCupList );
 
        
@@ -309,26 +300,28 @@ reset_GOTO:
         drawTrapezium(photo_undistorted, rightZoneTrapeziumInImage);
         drawTrapezium(photo_undistorted, leftZoneTrapeziumInImage);
 
-//        cv::Rect2d preciseRightBoundRec(rightBoundRect.x + cropZoneRight.x , rightBoundRect.y + cropZoneRight.y , rightBoundRect.width, rightBoundRect.height);
-//        cv::rectangle( photo_undistorted, preciseRightBoundRec.tl(), preciseRightBoundRec.br(), ColorWhite, 1);
-//
-//        cv::Rect2d preciseLeftBoundRec(leftBoundRect.x + cropZoneLeft.x , leftBoundRect.y + cropZoneLeft.y , leftBoundRect.width, leftBoundRect.height);
-//        cv::rectangle( photo_undistorted, preciseLeftBoundRec.tl(), preciseLeftBoundRec.br(), ColorWhite, 1);
-
 
         for(int cup=0; cup < redCupList.size(); cup++)
         {
-//            cv::Point pointInImage(redCupList[cup].x + cropCenterZone.x, redCupList[cup].y + cropCenterZone.y );
-//            cv::Point pointOnTable = positionOnTableFromPointInImage(pointInImage, K, rotationMatrix, position_detection_tvec);
-//            cout << "image " << pointInImage << " <=> table " << pointOnTable << endl;
+            cv::Point pointInImage(redCupList[cup].x + centerZoneRoi.x, redCupList[cup].y + centerZoneRoi.y );
+            cv::Point pointOnTable = positionOnTableFromPointInImage(pointInImage, K, rotationMatrix, position_detection_tvec, 115/2);
+            cout << "image " << pointInImage << " <=> table " << pointOnTable << endl;
         }
+
+        for(int cup=0; cup < greenCupList.size(); cup++)
+        {
+            cv::Point pointInImage(greenCupList[cup].x + centerZoneRoi.x, greenCupList[cup].y + centerZoneRoi.y );
+            cv::Point pointOnTable = positionOnTableFromPointInImage(pointInImage, K, rotationMatrix, position_detection_tvec, 115/2);
+            cout << "image " << pointInImage << " <=> table " << pointOnTable << endl;
+        }
+
         cout<< "compute duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
       
-        //cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
-        //cv::imshow( "photo_undistorted", photo_undistorted );         
-        //cv::namedWindow("centerMaskRed",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
-        //cv::imshow( "centerMaskRed", centerMaskRed );     
-        //cv::waitKey(0);
+        cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        cv::imshow( "photo_undistorted", photo_undistorted ); 
+        cv::namedWindow("centerZone",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        cv::imshow( "centerZone", centerZone );         
+        cv::waitKey(0);
 
         if(do_reset)
             goto reset_GOTO;
@@ -345,7 +338,7 @@ reset_GOTO:
 }
 
 
-void extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezium rightZoneTrapeziumInImage, cv::Mat &extract  )
+cv::Rect2d extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezium rightZoneTrapeziumInImage, cv::Mat &extract  )
 {
     int minX = std::min(rightZoneTrapeziumInImage.top_left.x, rightZoneTrapeziumInImage.bottom_left.x);
     int minY = std::min(rightZoneTrapeziumInImage.top_left.y, rightZoneTrapeziumInImage.top_right.y);
@@ -375,6 +368,7 @@ void extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezi
     drawContours( mask,co_ordinates,0, cv::Scalar(255),-1, 8 );
 
     cropedZone.copyTo(extract, mask);
+    return roi;
 }
 
 
@@ -436,7 +430,6 @@ void accept_calibration_btn_watch(int pigpioID)
     while(1)
     {
         wait_for_edge(pigpioID, gpio_num, FALLING_EDGE, 86400);
-        cout << " Accept calibration" << endl;
         accept_calibration = true;
         usleep(1000*500);
     }
@@ -452,7 +445,6 @@ void do_reset_btn_watch(int pigpioID)
     {
         wait_for_edge(pigpioID, gpio_num, FALLING_EDGE, 86400);    
         do_reset = true;
-            cout<<"RESET"<<endl; 
         usleep(1000*500);
     }
 }

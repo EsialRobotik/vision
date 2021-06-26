@@ -8,7 +8,7 @@ typedef struct
 	cv::Point bottom_left;
 } t_trapezium;
 
-cv::Point positionOnTableFromPointInImage(cv::Point &pointInImage, cv::Mat &cameraMatrix, cv::Mat &rotationMatrix, cv::Mat &tvec);
+cv::Point positionOnTableFromPointInImage(cv::Point &pointInImage, cv::Mat &cameraMatrix, cv::Mat &rotationMatrix, cv::Mat &tvec, int up_offset  = 0);
 
 bool detectArucoAndComputeRotVecMatrixes(cv::Mat const &photo_undistorted, cv::Mat const  &K, cv::Mat const  &D, 
 	cv::Mat &rvec, cv::Mat &tvec, cv::Mat &rotationMatrix );

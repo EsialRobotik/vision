@@ -23,13 +23,13 @@ extern int GPIO_aruco_42;
 extern int GPIO_aruco_51;
 extern int GPIO_aruco_69;
 
-cv::Point positionOnTableFromPointInImage(cv::Point &pointInImage, cv::Mat &cameraMatrix, cv::Mat &rotationMatrix, cv::Mat &tvec)
+cv::Point positionOnTableFromPointInImage(cv::Point &pointInImage, cv::Mat &cameraMatrix, cv::Mat &rotationMatrix, cv::Mat &tvec, int up_offset )
 {
     cv::Mat uvPoint = (cv::Mat_<double>(3,1) << pointInImage.x, pointInImage.y, 1);
     cv::Mat leftSideMat  = rotationMatrix.inv() * cameraMatrix.inv() * uvPoint;
     cv::Mat rightSideMat = rotationMatrix.inv() * tvec;
 
-    double s = rightSideMat.at<double>(2,0)/leftSideMat.at<double>(2,0); 
+    double s = up_offset  + rightSideMat.at<double>(2,0)/leftSideMat.at<double>(2,0); 
     cv::Mat positionIn3d = rotationMatrix.inv() * (s * cameraMatrix.inv() * uvPoint - tvec);
 
     cv::Point positionOnTable(positionIn3d.at<double>(0), positionIn3d.at<double>(1));
