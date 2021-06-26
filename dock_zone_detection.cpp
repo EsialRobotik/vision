@@ -15,7 +15,7 @@
 
 using namespace std; 
 
-void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone)
+void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, cv::Rect &boundRect,  cv::Mat &zone, std::vector<t_cup> &cupList)
 {
     constexpr int nbCup = 5;
     constexpr int nbChunk = 6; // the image is divided in 6 chunk, the first chunk will be oversized because of the perspective
@@ -27,7 +27,9 @@ void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, 
     cv::Point origin = boundRect.tl();
     cv::Point originBr = boundRect.br();
  
+#ifdef CONSOLE_DISP
     cout << "Cups in " << ((isRightZone) ? "righ" : "left") << "zone : "<< endl;    
+#endif
 
     if(boundRect.width < 20 && boundRect.height < 10 )
     {
@@ -72,18 +74,30 @@ void dockZoneDetection(bool isRightZone ,cv::Mat &redMask, cv::Mat & greenMask, 
         
         if( nbRed < 0.1*nb_pixel_in_zone  && nbGreen < 0.1*nb_pixel_in_zone )
         {
-           cv::rectangle(   zone, tl, br, ColorWhite, 10);
+            cv::rectangle(   zone, tl, br, ColorWhite, 10);
+#ifdef CONSOLE_DISP
+            
             cout << "   cup :" << cup << "  unknown" << endl;   
+#endif
+            cupList.push_back(cup_unknown);
         }
         else if( nbRed > nbGreen)
         {
             cv::rectangle(   zone, tl, br, ColorRed, 10);
-            cout << "   cup :" << cup << " Red" << endl;    
+#ifdef CONSOLE_DISP
+            
+            cout << "   cup :" << cup << " Red" << endl; 
+#endif
+            cupList.push_back(cup_red);   
         }
         else
         {
             cv::rectangle(   zone, tl, br, ColorGreen, 10);
+#ifdef CONSOLE_DISP
+            
             cout << "   cup :" << cup << " Green"<< endl;    
+#endif
+            cupList.push_back(cup_green);   
         }
 
 

@@ -19,6 +19,14 @@
 #include "center_zone_detection.hpp"
 #include "position_detection.hpp"
 #include "unistd.h"
+#include <iostream>
+#include <boost/asio.hpp>
+
+using namespace std; 
+using namespace boost::asio;
+using ip::udp;
+
+void send_rack_infos(udp::socket & socket, udp::endpoint &remote_endpoint, bool isRightDock, vector<t_cup> &dockCupList);
 
 cv::Rect2d extractTrapeziumZoneFromPointsInImage(cv::Mat &photo_undistorted, t_trapezium rightZoneTrapeziumInImage, cv::Mat &extract);
 void drawTrapezium(cv::Mat &photo_undistorted, t_trapezium &rightZoneTrapeziumInImage);
@@ -39,7 +47,6 @@ int GPIO_aruco_42 = 12;
 int GPIO_aruco_51 = 16;
 int GPIO_aruco_69 = 19;
 
-using namespace std; 
 
 static cv::Mat K, D;
 static cv::Mat fisheye_map1, fisheye_map2;
@@ -79,6 +86,18 @@ int main ( int argc,char **argv )
     set_mode(pigpioID, GPIO_aruco_42, PI_OUTPUT);
     set_mode(pigpioID, GPIO_aruco_51, PI_OUTPUT);
     set_mode(pigpioID, GPIO_aruco_69, PI_OUTPUT);
+
+
+
+    io_service io_service;
+
+    udp::socket socket(io_service);
+    socket.open(udp::v4());
+    udp::endpoint remote_endpoint = udp::endpoint(ip::address::from_string("127.0.0.1"), 4269);
+    boost::system::error_code err;
+    socket.send_to(boost::asio::buffer("robot", sizeof("robot")), remote_endpoint, 0, err);
+    
+
 
     /*
      * Retrieve fishey calibration from Camera & distortion matrix in configuration file.
@@ -206,13 +225,9 @@ reset_GOTO:
         clock_t start = clock();
         // Camera.grab();
         // Camera.retrieve ( photo);
-        cout<< "capture duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
+        
 
-
-        start = clock();
         cv::remap(photo, photo_undistorted, fisheye_map1, fisheye_map2, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
-        cout<< "fisheye compensation duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
-        start = clock(); 
 
 
         // Extract right/left zone 
@@ -283,8 +298,9 @@ reset_GOTO:
         cv::Rect rightBoundRect = cv::boundingRect(rightMaskRed|rightMaskGreen);
 
         // call dock zone color detection algorithm
-        dockZoneDetection(true, rightMaskRed, rightMaskGreen, rightBoundRect, rightZone);
-        dockZoneDetection(false, leftMaskRed, leftMaskGreen, leftBoundRect, leftZone);
+        vector<t_cup> rightDockCupList, leftDockCupList;
+        dockZoneDetection(true, rightMaskRed, rightMaskGreen, rightBoundRect, rightZone, rightDockCupList);
+        dockZoneDetection(false, leftMaskRed, leftMaskGreen, leftBoundRect, leftZone, leftDockCupList);
 
 
         /*
@@ -301,6 +317,7 @@ reset_GOTO:
         drawTrapezium(photo_undistorted, leftZoneTrapeziumInImage);
 
 
+#ifdef CONSOLE_DISP
         for(int cup=0; cup < redCupList.size(); cup++)
         {
             cv::Point pointInImage(redCupList[cup].x + centerZoneRoi.x, redCupList[cup].y + centerZoneRoi.y );
@@ -315,13 +332,23 @@ reset_GOTO:
             cout << "image " << pointInImage << " <=> table " << pointOnTable << endl;
         }
 
-        cout<< "compute duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
+#endif
+        
+        send_rack_infos(socket, remote_endpoint, true, rightDockCupList);
+        send_rack_infos(socket, remote_endpoint, false, leftDockCupList);
+
       
         cv::namedWindow("photo_undistorted",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
         cv::imshow( "photo_undistorted", photo_undistorted ); 
-        cv::namedWindow("centerZone",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
-        cv::imshow( "centerZone", centerZone );         
+        cv::namedWindow("rightZone",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        cv::imshow( "rightZone", rightZone );   
+        cv::namedWindow("leftZone",cv::WINDOW_NORMAL|cv::WINDOW_KEEPRATIO);
+        cv::imshow( "leftZone", leftZone );         
         cv::waitKey(0);
+
+#ifdef CONSOLE_DISP
+        cout<< "total duration = " <<  float(clock()-start)/CLOCKS_PER_SEC <<endl;
+#endif
 
         if(do_reset)
             goto reset_GOTO;
@@ -331,10 +358,31 @@ reset_GOTO:
     Camera.release();
     keep_alive_running = false;
     keep_alive_thread.join();
-
     pigpio_stop(pigpioID);
+    socket.close();
 
  return 0;
+}
+
+void send_rack_infos(udp::socket & socket, udp::endpoint &remote_endpoint, bool isRightDock, vector<t_cup> &dockCupList)
+{
+    char buffer[13];
+    sprintf(buffer, "rack%c#", isRightDock ? 'D' : 'G');
+    for(int cup=0; cup < dockCupList.size(); cup++)
+    {
+        char cupChar = '?';
+        if (dockCupList[cup] == cup_red)
+            cupChar = 'r';
+        else if (dockCupList[cup] == cup_green)
+            cupChar = 'v';
+
+        buffer[6+cup] = cupChar;
+    }
+    buffer[11] = '\n';
+    buffer[12] = 0;
+
+    boost::system::error_code err;
+    socket.send_to(boost::asio::buffer(buffer, sizeof(buffer)), remote_endpoint, 0, err);
 }
 
 
